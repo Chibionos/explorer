@@ -1,14 +1,17 @@
 # explorer
 
-A long-running TUI for **AI-driven exploratory testing** of web apps. Drives a
-real Chrome tab via [browser-harness](https://github.com/anthropics/browser-harness),
-spawns Claude Code subprocesses to run scenarios you (or a coding agent) approved,
-files bugs to a Jira epic with **code-aware fix suggestions** by Read/Grep-ing the
-product source, and optionally maintains a Confluence page as a per-scenario
-evidence record.
+A TUI that points Claude Code at a web app and tells it to find bugs.
 
-Designed so **any coding agent can start it, watch it, and course-correct it** —
-all via the CLI.
+You give it a Jira epic, a codebase path, a Chrome tab, and a plan. It
+opens the tab, drives the UI, notices when something's off, reads the
+product source to figure out which file is at fault, files a Jira ticket
+with a suggested fix, and moves to the next scenario. It runs
+unattended for hours, and any coding agent can start it, peek at it
+from outside, or kill a stuck explorer without quitting the TUI.
+
+<p align="center">
+  <img src="docs/img/hero.jpg" alt="An AI character inspecting a web browser, with a terminal showing bug findings in the background" width="720"/>
+</p>
 
 ```
 ┌─ explorer ─ Bugs: 7 │ Pending: 4 │ Discovered: 11 │ Jira: AE / Epic AE-1546 │ Code: ~/r/flow-workbench
@@ -30,41 +33,47 @@ all via the CLI.
 └─ q quit  p pause  e expand  t pick tab  ↑↓ navigate  enter open ──────────────
 ```
 
-## Why use it
+## How it works in practice
 
-- **No babysitting.** Set up a plan, hit `y`, walk away. The runner cycles
-  scenarios serially across one Chrome tab; bug-filer sub-agents run in parallel.
-- **Real codebase context.** When a bug-filer agent finds something, it `Read`s
-  the product source to identify suspect files and writes a fix suggestion in
-  the Jira ticket — ready for any coding agent to pick up.
-- **Designed for coding-agent orchestration.** Every flag, every state file, every
-  subcommand is non-interactive-friendly. Coding agents can start it, query
-  status from outside via `explorer status`, watch events with `explorer tail`,
-  swap plans on `--resume`, change target tab via `--pick-tab`.
+Set up a plan, hit `y`, walk away. The runner takes scenarios one at a
+time on your single Chrome tab. Inside each scenario, bug-filer
+sub-agents fan out in parallel the moment the explorer spots something
+suspicious.
+
+The bug-filer is the trick. It opens your codebase, greps for the code
+behind the broken UI, identifies the likely file and line range, and
+writes a fix suggestion into the Jira body. So the tickets that land in
+your epic aren't just "this is broken, here's a screenshot" — they read
+like a starting point an engineer (or a coding agent) can act on
+without re-investigating from scratch.
+
+Everything talks back through the CLI, not just the TUI. `explorer
+status` summarizes a live or finished run. `explorer tail` streams the
+event feed. `--resume` continues a stopped session. `--pick-tab`
+retargets. If you're building automation on top of this, you'll spend
+more time on those subcommands than in the TUI.
 
 ## Install
 
-Requires Python ≥ 3.11, [uv](https://docs.astral.sh/uv/), the
-[`claude`](https://docs.claude.com/claude-code) CLI on PATH (authenticated), and
-the `browser-harness` CLI attached to a running Chrome session.
+You need Python 3.11+, [uv](https://docs.astral.sh/uv/), the
+[`claude`](https://docs.claude.com/claude-code) CLI authenticated on
+PATH, and `browser-harness` attached to a Chrome session.
 
 ```bash
-# clone + install globally as an editable uv tool
 git clone https://github.com/Chibionos/explorer.git
 cd explorer
 uv tool install --reinstall --editable .
-
-# verify
 which explorer            # → ~/.local/bin/explorer
 explorer --help
 ```
 
-To upgrade after pulling new code: `uv tool install --reinstall --editable .`
+Re-run the install line after pulling new code. It's an editable
+install so most edits are live, but a fresh dependency lands properly
+this way.
 
 ## Quickstart
 
 ```bash
-# from any directory — config saves to .explorer/project.yaml here
 explorer \
   --jira-project AE \
   --epic AE-1546 \
@@ -72,57 +81,53 @@ explorer \
   --plan plans/your-plan.yaml -y --continuous
 ```
 
-If you omit `--tab-url`, a tab picker pops in the TUI listing every open Chrome
-tab. Pick one with `↑↓ Enter`.
+If you skip `--tab-url`, a picker pops in the TUI listing every open
+Chrome tab. Arrow keys + Enter.
 
-## How a coding agent uses this
+## Running it from another agent
 
 ```bash
-# 1. Set up the project (one time per cwd)
+# 1. Set it up (once per cwd; saves to .explorer/project.yaml)
 explorer \
   --jira-project AE --epic AE-1546 \
   --codebase /home/me/r/flow-workbench \
   --confluence-space ENG \
   --plan plans/eval-flows.yaml -y --continuous
 
-# 2. From a separate shell, watch progress
-explorer status                  # one-shot human summary
-explorer status --json           # machine-readable for parsing
-explorer tail                    # stream of formatted events
-explorer tail --filter bug_filed # only bug events
+# 2. Watch from another shell
+explorer status                   # human-readable summary
+explorer status --json            # parseable
+explorer tail                     # live event feed
+explorer tail --filter bug_filed  # only bugs
 
-# 3. Course-correct: swap to a different plan, resume after a stop, etc.
-explorer --resume --continuous   # pick up the latest run
-explorer --resume --pick-tab     # repick the tab before continuing
+# 3. Course-correct
+explorer --resume --continuous    # pick up the latest run
+explorer --resume --pick-tab      # repick the tab before continuing
 ```
 
 ## CLI reference
 
-### `explorer` (default: launch the TUI)
+`explorer` (no subcommand) launches the TUI.
 
 | Flag | Purpose |
 |------|---------|
 | `--jira-project KEY` | Jira project key. Required on first run. |
 | `--epic KEY` | Jira epic key for bug filing. Required on first run. |
-| `--codebase PATH` | Path to the product source tree. Required on first run. |
-| `--tab-url URL` | Browser tab the explorer should target. Omit → TUI picker. |
-| `--bu-name NAME` | `browser-harness` daemon name (default: harness default). |
-| `--plan PATH` | YAML plan file. Skips the in-TUI planner interview. |
-| `-y, --yes` | Auto-approve when `--plan` is set. |
-| `--continuous` | When the queue empties, requeue the original scenarios as a fresh round. Press `q` to stop. |
-| `--resume [PATH]` | Continue a previous run. Without a value, picks the latest. |
-| `--pick-tab` | Force the tab picker even when a tab is configured. |
-| `--confluence-space KEY` | Create a new Confluence page per run and update it as scenarios complete. |
-| `--confluence-page ID` | Append scenarios to an existing Confluence page (persistent evidence log). |
+| `--codebase PATH` | Path to the product source. Required on first run. |
+| `--tab-url URL` | Browser tab to target. Omit to get a picker. |
+| `--bu-name NAME` | `browser-harness` daemon name. |
+| `--plan PATH` | YAML plan file. Skips the in-TUI interview. |
+| `-y`, `--yes` | Auto-approve when `--plan` is set. |
+| `--continuous` | Cycle rounds once the queue empties. `q` to stop. |
+| `--resume [PATH]` | Continue a previous run. No value = latest. |
+| `--pick-tab` | Force the tab picker. |
+| `--confluence-space KEY` | Create a fresh Confluence page per run. |
+| `--confluence-page ID` | Append to an existing Confluence page. |
 
-### `explorer status`
+`explorer status` prints a one-shot summary; `--json` for parsing.
 
-One-shot summary of the current/latest run. `--json` for machine output.
-
-### `explorer tail`
-
-Stream events.jsonl with friendly formatting and emoji prefixes. `--filter <type>`
-to narrow (e.g. `--filter bug_filed`).
+`explorer tail` streams `events.jsonl` with emoji prefixes; `--filter
+<type>` to narrow.
 
 ## Plan file format
 
@@ -131,91 +136,92 @@ scenarios:
   - id: short-kebab-id           # unique within the file
     title: One-line description
     goal: |
-      1-3 sentences telling the explorer agent what to try and what
+      1-3 sentences telling the explorer what to try and what
       kinds of bugs to be alert for (UI/UX, functional, intuitive).
-  - id: ...
 ```
 
-Any coding agent can write a plan file and pass it via `--plan`. Sample under
-[`plans/`](plans/).
+Any agent can write a plan file and pass it via `--plan`. Samples
+under [`plans/`](plans/).
 
-## Architecture (one screen)
+## Architecture
 
 ```
-explorer/             # the orchestrator (single Python process, Textual TUI)
+explorer/
 ├── __main__.py       # subcommand routing + amain() orchestration loop
-├── cli/              # `status` and `tail` non-TUI subcommands
+├── cli/              # status and tail non-TUI subcommands
 ├── config/           # CLI flags + project.yaml persistence
-├── core/             # pure state: EventBus, ScenarioQueue, BugStore, DedupIndex,
-│                     #             BrowserLock, RunPaths
-├── runner/           # subprocess drivers
-│   ├── claude_proc.py        # spawns `claude --output-format stream-json`
+├── core/             # pure state: EventBus, ScenarioQueue, BugStore,
+│                     # DedupIndex, BrowserLock, RunPaths
+├── runner/           # subprocess drivers + the markdown prompts
+│   ├── claude_proc.py        # spawns claude --output-format stream-json
 │   ├── explorer.py           # per-scenario explorer subprocess
-│   ├── planner.py            # one-shot planner subprocess from interview answers
-│   ├── confluence.py         # confluence-writer subprocess on scenario_done
-│   ├── tabs.py               # browser-harness chrome-tab listing
-│   ├── interview.py          # interactive stdin-pipe variant
-│   ├── event_log_tailer.py   # tails the sentinel JSONL → EventBus
-│   └── prompts/              # markdown system prompts for each subprocess role
-└── tui/              # Textual widgets: header, sessions tree, bugs list,
-                      # log strip, plan screen, tab picker
+│   ├── planner.py            # one-shot planner from interview answers
+│   ├── confluence.py         # confluence writer on scenario_done
+│   ├── tabs.py               # CDP-based chrome tab listing
+│   ├── event_log_tailer.py   # tails the sentinel JSONL to the event bus
+│   └── prompts/              # markdown prompts for every subprocess role
+└── tui/              # Textual widgets
 ```
 
-### Concurrency model
+### Concurrency
 
-- **One explorer at a time.** `BrowserLock` serializes access to your one Chrome tab.
-- **Bug-filers run in parallel** as `Task` sub-agents inside the same explorer
-  subprocess (Claude Code's `Task` tool, with `run_in_background=true`).
-- **Confluence updates happen async** after each `scenario_done` event — they
-  don't block the next scenario from starting.
+One explorer at a time, because there's one Chrome tab. The
+`BrowserLock` serializes scenarios. Inside each explorer, bug-filer
+sub-agents run in parallel via Claude Code's `Task` tool with
+`run_in_background=true`. Confluence updates fire after each
+`scenario_done` and don't block the next scenario from starting.
 
 ### Two event channels
 
-1. `--output-format stream-json` from each `claude` subprocess → orchestrator
-   parses to get sub-agent nesting (Task tool_use → `subagent_start`/`subagent_end`)
-   and live action visibility (every Bash/Read/Grep/MCP call → `note`).
-2. **Sentinel JSONL** at `.explorer/runs/<ts>/explorer_event_log.jsonl`. The
-   explorer subprocess `Bash`-appends structured events here
-   (`bug_observed`, `bug_filed`, `scenario_done`, `plan_ready`,
-   `confluence_page_ready`, …). Canonical truth for queue + bug state.
+You need both. They do different jobs.
+
+`stream-json` from each `claude` subprocess feeds sub-agent nesting
+(Task tool calls become `subagent_start` / `subagent_end`) and live
+visibility into every Bash / Read / Grep / MCP call as a `note`. That's
+what powers the log strip and the expandable timeline in the TUI.
+
+A sentinel JSONL file at `.explorer/runs/<ts>/explorer_event_log.jsonl`
+is the canonical record. The explorer subprocess shell-appends
+structured events (`bug_observed`, `bug_filed`, `scenario_done`,
+`plan_ready`, `confluence_page_ready`) here. Parsing English out of the
+LLM is unreliable; this file is the truth.
 
 ### State on disk
 
 ```
 .explorer/
-├── project.yaml          # CLI defaults: jira_project, epic_key, codebase_path,
-│                         # tab_url, bu_name, confluence_space, confluence_page
+├── project.yaml          # CLI defaults: jira_project, epic_key,
+│                         # codebase_path, tab_url, bu_name,
+│                         # confluence_space, confluence_page
 └── runs/<timestamp>/
     ├── plan.yaml         # the approved scenarios
-    ├── events.jsonl      # full event log (replayable; status/tail read this)
-    ├── explorer_event_log.jsonl   # raw sentinel events from subprocesses
+    ├── events.jsonl      # full event log; status/tail read this
+    ├── explorer_event_log.jsonl   # raw sentinel events
     ├── bugs.json         # mirror of bugs filed in this run
     └── screenshots/<uuid>.png
 ```
 
 ## Confluence integration
 
-Two modes via flags:
+`--confluence-space KEY` creates a fresh page per run titled `[Explorer]
+<timestamp>` in that space. Each `scenario_done` appends a new section
+with title, goal, status, bugs filed (with Jira links), and screenshot
+paths.
 
-- `--confluence-space KEY` — creates a new page titled `[Explorer] <run timestamp>`
-  in that space. Each `scenario_done` appends a new section: title, goal,
-  status, bugs filed (with Jira links), and the list of screenshot paths in the
-  run dir.
-- `--confluence-page ID` — appends to an existing page. Useful for a rolling
-  evidence log across many runs.
+`--confluence-page ID` appends to an existing page instead. Pick this
+if you want a rolling evidence log across many runs.
 
-The page ID is persisted to `project.yaml` after first run, so subsequent
-runs from the same cwd default to it.
+Either way, the page ID gets persisted to `project.yaml` after first
+run, so subsequent runs from the same cwd default to it.
 
-**Note on screenshots:** v1 references screenshots by their filesystem paths in
-the run directory rather than embedding them. We're tracking inline image
-embedding as a follow-up.
+A caveat: v1 references screenshots by filesystem path in the run dir
+rather than embedding them inline in the Confluence page. Inline image
+embedding is a known follow-up. Video recording is also deferred.
+Today you get one screenshot per bug observation, and a periodic
+filmstrip + ffmpeg assembly path is on the roadmap if it matters to
+anyone.
 
-**Note on video:** real screen recording is deferred; we ship one screenshot
-per bug observation (the explorer takes one to attach to the bug report). Adding
-a periodic filmstrip + ffmpeg assembly is on the roadmap.
-
-## Bug filing flow
+## How a bug gets filed
 
 ```
 [explorer subprocess]
@@ -224,7 +230,7 @@ a periodic filmstrip + ffmpeg assembly is on the roadmap.
                    Task(bug-filer, run_in_background=true)
                                         ↓
                  [bug-filer claude sub-agent, cwd = codebase]
-                   ├─ checks known-bug list (dedup)
+                   ├─ checks known-bug list (signature dedup)
                    ├─ Read/Grep over product source for suspect code
                    ├─ either mcp__atlassian__createJiraIssue
                    │       (Bug under the epic, body has Symptom +
@@ -234,28 +240,35 @@ a periodic filmstrip + ffmpeg assembly is on the roadmap.
                    └─ writes bug_filed / bug_dup_comment event
 ```
 
-Dedup index uses normalized title (lowercased, punctuation stripped, stopwords
-removed) so "Modal close (X) misses 4px" and "modal close X misses 4px" hash to
-the same key.
+Dedup is on the normalized title: lowercased, punctuation stripped,
+stopwords removed. "Modal close (X) misses 4px" and "modal close X
+misses 4px" hash to the same key, and the second discovery becomes a
+comment on the first ticket instead of a new one.
 
 ## Testing
 
 ```bash
-uv run pytest -v       # 55 tests (core state + event parsing)
+uv run pytest -v       # 55 tests across core state and event parsing
 ```
 
-TUI rendering itself isn't unit-tested (Textual snapshots are flaky for nested
-reactive trees); panes stay dumb so unit-tests of state suffice. There's a
-manual E2E smoke at `tests/e2e/smoke.sh` (FastAPI Jira mock + canned HTML page).
+TUI rendering isn't unit-tested. Textual snapshot tests are flaky for
+nested reactive trees, so the widgets stay dumb and the state modules
+carry the coverage. There's a manual E2E smoke at `tests/e2e/smoke.sh`
+(FastAPI Jira mock + canned HTML page) for the rare full-stack check.
+
+## Spec
+
+Want to build your own version of this in a different language or
+stack? [`SPEC.md`](SPEC.md) is the seed. It captures the invariants, the
+event model, the prompt contracts, the lifecycle, and the 14 specific
+traps the reference build hit along the way.
 
 ## Built with
 
-- [Textual](https://textual.textualize.io/) for the TUI
-- [browser-harness](https://github.com/anthropics/browser-harness) for the
-  Chrome CDP bridge
-- [Claude Code](https://docs.claude.com/claude-code) for the per-scenario
-  subprocesses (uses MCP for Jira/Confluence; Read/Grep for codebase analysis)
-- [uv](https://docs.astral.sh/uv/) for package management
+[Textual](https://textual.textualize.io/),
+[browser-harness](https://github.com/anthropics/browser-harness),
+[Claude Code](https://docs.claude.com/claude-code), and
+[uv](https://docs.astral.sh/uv/).
 
 ## License
 
