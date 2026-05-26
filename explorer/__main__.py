@@ -13,11 +13,17 @@ from .core.browser_lock import BrowserLock
 from .core.run_paths import RunPaths
 from .runner.event_log_tailer import tail_event_log
 from .runner.explorer import run_explorer
-from .runner.interview import run_interactive_claude
+from .runner.planner import run_planner_with_answers
 from .tui.app import ExplorerApp
 from .tui.plan_screen import PlanScreen
 
 import yaml
+
+
+def _load_plan_file(path: Path) -> list[Scenario]:
+    data = yaml.safe_load(path.read_text())
+    return [Scenario(id=s["id"], title=s["title"], goal=s["goal"])
+            for s in data.get("scenarios", [])]
 
 
 async def amain() -> int:
@@ -40,29 +46,56 @@ async def amain() -> int:
                 f.write(json.dumps({"type": ev.type, "data": ev.data}) + "\n")
     persist_task = asyncio.create_task(persist_events())
 
-    # ---- Planner interview ----
-    answers: asyncio.Queue[str] = asyncio.Queue()
+    # ---- Plan source: --plan file vs. interactive interview ----
+    answers_out: asyncio.Queue[list[str]] = asyncio.Queue()
+    plan_screen = PlanScreen(answers_out=answers_out)
+    planner_task: asyncio.Task | None = None
 
-    async def watch_for_plan():
-        async for ev in bus.subscribe("plan_ready"):
-            scenarios = ev.data.get("scenarios", [])
-            run_paths.plan_yaml.write_text(
-                yaml.safe_dump({"scenarios": scenarios}, sort_keys=False))
-            for s in scenarios:
-                queue.propose(Scenario(id=s["id"], title=s["title"], goal=s["goal"]))
-            return scenarios
+    if args.plan:
+        # Pre-made plan from a YAML file. Skip planner + interview entirely.
+        plan_path = Path(args.plan)
+        if not plan_path.exists():
+            print(f"--plan: file not found: {plan_path}", file=sys.stderr)
+            return 2
+        scenarios = _load_plan_file(plan_path)
+        for s in scenarios:
+            queue.propose(s)
+        run_paths.plan_yaml.write_text(plan_path.read_text())
 
-    plan_watcher = asyncio.create_task(watch_for_plan())
+        if args.yes:
+            # Auto-approve: emit a fake "approved" dismiss on first paint by
+            # having the screen put a plan_ready into the bus and skipping
+            # right past approval.
+            plan_screen.set_auto_approve(yaml.safe_dump(
+                {"scenarios": [{"id": s.id, "title": s.title, "goal": s.goal}
+                               for s in scenarios]}, sort_keys=False))
+        else:
+            # Show the plan in the approval screen so user can sanity-check.
+            plan_screen.set_preloaded_plan(yaml.safe_dump(
+                {"scenarios": [{"id": s.id, "title": s.title, "goal": s.goal}
+                               for s in scenarios]}, sort_keys=False))
+    else:
+        # Interactive: TUI walks through questions, then planner subprocess
+        # converts answers into a plan_ready event.
+        async def run_planner_after_answers():
+            answers = await answers_out.get()
+            return await run_planner_with_answers(
+                answers=answers,
+                event_log=run_paths.event_log_for_subprocess,
+                bus=bus,
+                codebase_path=Path(cfg.codebase_path),
+            )
+        planner_task = asyncio.create_task(run_planner_after_answers())
 
-    prompt_planner = (Path(__file__).parent / "runner/prompts/system_planner.md").read_text()
-    env = {"EXPLORER_EVENT_LOG": str(run_paths.event_log_for_subprocess)}
-    planner_task = asyncio.create_task(run_interactive_claude(
-        prompt=prompt_planner, cwd=Path(cfg.codebase_path),
-        env_overrides=env, bus=bus, session_label="planner", answers=answers,
-    ))
-
-    # ---- TUI ----
-    plan_screen = PlanScreen(answers=answers)
+        async def watch_for_plan():
+            async for ev in bus.subscribe("plan_ready"):
+                scenarios = ev.data.get("scenarios", [])
+                run_paths.plan_yaml.write_text(
+                    yaml.safe_dump({"scenarios": scenarios}, sort_keys=False))
+                for s in scenarios:
+                    queue.propose(Scenario(id=s["id"], title=s["title"], goal=s["goal"]))
+                return scenarios
+        plan_watcher = asyncio.create_task(watch_for_plan())
 
     async def runner():
         scen_idx = 0
@@ -112,8 +145,12 @@ async def amain() -> int:
     await app.run_async()
 
     # shutdown
-    for t in (tailer, persist_task, plan_watcher, planner_task,
-              bug_handler, proposed_handler):
+    tasks_to_cancel = [tailer, persist_task, bug_handler, proposed_handler]
+    if planner_task is not None:
+        tasks_to_cancel.append(planner_task)
+    if 'plan_watcher' in locals():
+        tasks_to_cancel.append(plan_watcher)
+    for t in tasks_to_cancel:
         t.cancel()
     return 0
 

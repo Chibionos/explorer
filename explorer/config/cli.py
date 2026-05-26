@@ -13,6 +13,8 @@ class CliArgs:
     codebase: str | None
     tab_url: str | None
     bu_name: str | None
+    plan: str | None
+    yes: bool
 
 
 def parse_args(argv: list[str]) -> CliArgs:
@@ -22,9 +24,15 @@ def parse_args(argv: list[str]) -> CliArgs:
     p.add_argument("--codebase")
     p.add_argument("--tab-url")
     p.add_argument("--bu-name")
+    p.add_argument("--plan",
+                   help="Path to a YAML file with pre-made scenarios "
+                        "(skips the in-TUI planner / interview).")
+    p.add_argument("-y", "--yes", action="store_true",
+                   help="When --plan is given, auto-approve and skip the approval screen.")
     ns = p.parse_args(argv)
     return CliArgs(jira_project=ns.jira_project, epic=ns.epic,
-                   codebase=ns.codebase, tab_url=ns.tab_url, bu_name=ns.bu_name)
+                   codebase=ns.codebase, tab_url=ns.tab_url, bu_name=ns.bu_name,
+                   plan=ns.plan, yes=ns.yes)
 
 
 def resolve_config(args: CliArgs, project_dir: Path) -> ProjectConfig:

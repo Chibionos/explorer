@@ -1,0 +1,108 @@
+# Maestro Studio designer — smoke exploratory plan
+# Target tab: https://staging.uipath.com/maestrolab/studio_/designer/<fileId>
+# Codebase: /home/chibionos/r/flow-workbench
+# Approved: do not execute workflows (no Debug/Run), do not navigate away from
+# the open fileId, do not modify production data.
+
+scenarios:
+  - id: canvas-add-and-connect
+    title: Adding and connecting activities on the canvas
+    goal: |
+      Drag the most common activity types from the toolbox onto the canvas
+      and connect them in various ways (linear, branched, looped back).
+      Look for: missing affordances, ghost connections, drop targets that
+      don't accept what they imply, nodes that overlap, broken arrow rendering,
+      labels that disappear or wrap badly.
+
+  - id: properties-panel-editing
+    title: Editing properties of selected activities
+    goal: |
+      For 3-4 different activity types, open the properties panel and try
+      every input: empty values, very long strings, special chars, paste a
+      multi-line string into a single-line field, switch tabs while editing.
+      Look for: focus loss bugs, save-on-blur not firing, validation that
+      lies (shows error but accepts the value), labels that don't match
+      their fields, missing required-field asterisks.
+
+  - id: expression-editor
+    title: Expression editor edge cases
+    goal: |
+      Open any expression field on a property. Try: empty, a long valid
+      expression, an obviously invalid one (unclosed quote, undefined var),
+      paste a multi-line expression, type fast then click out.
+      Look for: red squiggles appearing then never going away, error
+      tooltips that don't match the actual problem, the editor swallowing
+      Tab, autocomplete that fires on the wrong characters.
+
+  - id: save-and-dirty-state
+    title: Save indicator and dirty-state correctness
+    goal: |
+      Make a small change. Check the dirty indicator (asterisk, "unsaved",
+      etc.). Save. Refresh the page. Reload the route. Repeat with multiple
+      activities. Make a change, then undo it back to clean.
+      Look for: dirty stays true after save, dirty becomes true on no-op
+      clicks, save spinner that never disappears, refresh prompt that fires
+      on a clean file, refresh that loses changes silently.
+
+  - id: undo-redo
+    title: Undo / redo through 10+ steps
+    goal: |
+      Perform a chain of operations: add, connect, edit a property, delete,
+      move. Press Ctrl-Z 10+ times. Then Ctrl-Y forward. Try undoing past
+      the initial state.
+      Look for: undo states that don't fully revert (orphan nodes, ghost
+      connections), the redo button enabling when it shouldn't, undo
+      crashing the canvas, undo crossing the save boundary in a confusing
+      way.
+
+  - id: errors-panel
+    title: Errors panel + jump-to-source
+    goal: |
+      Create a deliberate error (delete a required input, reference an
+      undefined variable, leave a required field empty). Open the errors
+      panel. Click an error.
+      Look for: error count not matching list length, errors that say
+      "click to fix" but don't navigate, errors for fixed issues that linger,
+      panel that doesn't reflect the live state.
+
+  - id: keyboard-shortcuts
+    title: Keyboard shortcuts and accessibility basics
+    goal: |
+      Try Ctrl-Z / Ctrl-Y / Ctrl-C / Ctrl-V / Delete / Escape / Tab from
+      different focus contexts (canvas, properties panel, expression
+      editor, modal). Tab through the toolbar.
+      Look for: shortcuts that fire when typing in a text input, Escape
+      that closes the wrong thing, focus rings that are invisible, tab
+      order that jumps around, shortcuts that conflict with browser
+      shortcuts without warning.
+
+  - id: zoom-and-pan
+    title: Canvas zoom and pan extremes
+    goal: |
+      Zoom in to max, zoom out to min, pan far off-canvas, fit-to-screen.
+      Try with a small workflow and (if easy to assemble) a 20+ node
+      workflow.
+      Look for: nodes that disappear at extreme zoom, click targets that
+      stop working at certain zoom levels, the minimap (if any) drifting
+      out of sync, fit-to-screen that doesn't actually fit.
+
+  - id: modal-and-dialog-behavior
+    title: Modal and dialog UX
+    goal: |
+      Open any modal/dialog you can find (settings, delete confirmation,
+      file/version picker). Try: Escape to close, click outside, click X,
+      open then refresh, open while another is open.
+      Look for: Escape that doesn't close, click-outside that closes when
+      you didn't mean to, X buttons that are mis-aligned on the modal
+      header, modals that stack badly, modals you can't dismiss without a
+      page refresh.
+
+  - id: responsive-and-narrow-window
+    title: Behavior at narrow viewport widths
+    goal: |
+      Use the browser to shrink the window width to ~900px, then ~600px.
+      Try basic editing.
+      Look for: panels that overlap the canvas, scrollbars that hide
+      content, buttons truncated to ellipsis without tooltips, properties
+      panel that becomes unreachable, layout breakages that aren't covered
+      by an explicit "not supported on mobile" message.
