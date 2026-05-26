@@ -10,7 +10,7 @@ from .project_yaml import ProjectConfig, load, save
 class CliArgs:
     jira_project: str | None
     epic: str | None
-    codebase: str | None
+    codebases: list[str] | None     # repeatable --codebase
     tab_url: str | None
     bu_name: str | None
     plan: str | None
@@ -27,8 +27,10 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
                    help="Jira project key for bug filing (e.g. AE). Required on first run.")
     p.add_argument("--epic",
                    help="Jira epic key under which to file bugs. Required on first run.")
-    p.add_argument("--codebase",
-                   help="Path to the product source tree. Required on first run.")
+    p.add_argument("--codebase", action="append", default=None,
+                   help="Path to a product source tree. Required on first run. "
+                        "Repeatable: pass multiple times to feed the bug-filer "
+                        "multiple repos so it can find code that spans services.")
     p.add_argument("--tab-url",
                    help="The browser tab URL the explorer should target. If omitted, "
                         "the TUI shows a tab picker on startup.")
@@ -69,7 +71,7 @@ def parse_args(argv: list[str]) -> CliArgs:
     ns = p.parse_args(argv)
     return CliArgs(
         jira_project=ns.jira_project, epic=ns.epic,
-        codebase=ns.codebase, tab_url=ns.tab_url, bu_name=ns.bu_name,
+        codebases=ns.codebase, tab_url=ns.tab_url, bu_name=ns.bu_name,
         plan=ns.plan, yes=ns.yes, continuous=ns.continuous,
         resume=ns.resume, pick_tab=ns.pick_tab,
         confluence_space=ns.confluence_space, confluence_page=ns.confluence_page,
@@ -81,7 +83,7 @@ def resolve_config(args: CliArgs, project_dir: Path) -> ProjectConfig:
     if disk is not None:
         merged = disk.merge(
             jira_project=args.jira_project, epic_key=args.epic,
-            codebase_path=args.codebase, tab_url=args.tab_url,
+            codebase_paths=args.codebases, tab_url=args.tab_url,
             bu_name=args.bu_name,
             confluence_space=args.confluence_space,
             confluence_page=args.confluence_page,
@@ -93,15 +95,15 @@ def resolve_config(args: CliArgs, project_dir: Path) -> ProjectConfig:
     missing = [name for name, v in (
         ("--jira-project", args.jira_project),
         ("--epic", args.epic),
-        ("--codebase", args.codebase),
-    ) if v is None]
+        ("--codebase", args.codebases),
+    ) if not v]
     if missing:
         print(f"first run requires: {', '.join(missing)}", file=sys.stderr)
         sys.exit(2)
 
     cfg = ProjectConfig(
         jira_project=args.jira_project, epic_key=args.epic,
-        codebase_path=args.codebase, tab_url=args.tab_url,
+        codebase_paths=args.codebases, tab_url=args.tab_url,
         bu_name=args.bu_name,
         confluence_space=args.confluence_space,
         confluence_page=args.confluence_page,

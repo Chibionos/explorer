@@ -16,8 +16,18 @@ def _substitute(template: str, vars: dict[str, str]) -> str:
     return out
 
 
+def _format_codebases(paths: list[Path]) -> str:
+    """Format the codebase list for embedding in the explorer prompt."""
+    if len(paths) == 1:
+        return str(paths[0])
+    lines = [f"- primary (your cwd): {paths[0]}"]
+    for p in paths[1:]:
+        lines.append(f"- additional (use absolute Read/Grep): {p}")
+    return "\n".join(lines)
+
+
 async def run_explorer(
-    *, scenario: Scenario, codebase_path: Path, event_log: Path,
+    *, scenario: Scenario, codebase_paths: list[Path], event_log: Path,
     screenshots_dir: Path, jira_project: str, epic_key: str,
     dedup: DedupIndex, bus: EventBus, session_label: str,
     tab_url: str | None = None,
@@ -34,7 +44,9 @@ async def run_explorer(
         "EPIC_KEY": epic_key,
         "KNOWN_BUG_TITLES": known,
         "TAB_URL": tab_url or "(none — verify the current tab looks like an app under test)",
+        "CODEBASES": _format_codebases(codebase_paths),
     })
+    additional = "\n".join(str(p) for p in codebase_paths[1:])
     env = {
         "EXPLORER_EVENT_LOG": str(event_log),
         "SCREENSHOTS_DIR": str(screenshots_dir),
@@ -42,9 +54,13 @@ async def run_explorer(
         "PROPOSER_PROMPT_PATH": str(PROMPTS_DIR / "system_proposer.md"),
         "JIRA_PROJECT": jira_project,
         "EPIC_KEY": epic_key,
+        "ADDITIONAL_CODEBASES": additional,
     }
     if bu_name:
         env["BU_NAME"] = bu_name
-    return await run_claude(prompt=prompt, cwd=codebase_path,
-                            env_overrides=env, bus=bus, session_label=session_label,
-                            proc_holder=proc_holder)
+    return await run_claude(
+        prompt=prompt,
+        cwd=codebase_paths[0],            # primary codebase is the cwd
+        env_overrides=env, bus=bus, session_label=session_label,
+        proc_holder=proc_holder,
+    )

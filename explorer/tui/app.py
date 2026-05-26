@@ -68,7 +68,8 @@ class ExplorerApp(App):
         self.header = Header(id="header")
         self.header.jira_project = self._cfg.jira_project
         self.header.epic_key = self._cfg.epic_key
-        self.header.codebase_path = self._cfg.codebase_path
+        paths = self._cfg.codebase_paths
+        self.header.codebase_path = paths[0] if len(paths) == 1 else f"{paths[0]} (+{len(paths)-1})"
         yield self.header
         self.sessions_pane = SessionsPane(id="sessions")
         self.bugs_pane = BugsPane(self._bugs, id="bugs")

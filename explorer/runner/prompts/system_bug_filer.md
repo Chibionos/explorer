@@ -20,10 +20,16 @@ epic, and emit a result event.
 1. **Dedup check.** If any existing title in `{{KNOWN_BUG_TITLES}}` describes
    essentially the same bug, you'll add a comment instead (proceed to step 4).
 
-2. **Code search.** Working directory is the product codebase. Search for code
-   producing this UI. Use `Grep`/`Read`/`Glob` on filenames and visible strings.
-   Identify:
-   - The most likely source file(s) and line ranges.
+2. **Code search.** Your working directory is the **primary codebase**.
+   The orchestrator may have provided **additional codebases** as well; check
+   `$ADDITIONAL_CODEBASES` (newline-separated absolute paths). If that variable
+   is non-empty, you should `Grep`/`Read`/`Glob` across BOTH the primary cwd
+   AND each absolute path listed there — UI symptoms sometimes have backend
+   roots in a different repo.
+   Search for code producing this UI. Use filenames, visible strings, error
+   messages, network endpoints. Identify:
+   - The most likely source file(s) and line ranges. Quote the full path
+     (especially for matches outside the primary cwd).
    - A plausible reason it's broken.
    - A suggested fix outline (specific enough for another coding agent to act
      on without re-investigating).

@@ -2,12 +2,12 @@
 
 A TUI that points Claude Code at a web app and tells it to find bugs.
 
-You give it a Jira epic, a codebase path, a Chrome tab, and a plan. It
-opens the tab, drives the UI, notices when something's off, reads the
-product source to figure out which file is at fault, files a Jira ticket
-with a suggested fix, and moves to the next scenario. It runs
-unattended for hours, and any coding agent can start it, peek at it
-from outside, or kill a stuck explorer without quitting the TUI.
+You give it a Jira epic, one or more codebase paths, a Chrome tab, and
+a plan. It opens the tab, drives the UI, notices when something's off,
+reads the product source to figure out which file is at fault, files a
+Jira ticket with a suggested fix, and moves to the next scenario. It
+runs unattended for hours, and any coding agent can start it, peek at
+it from outside, or kill a stuck explorer without quitting the TUI.
 
 <p align="center">
   <img src="docs/img/hero.jpg" alt="An AI character inspecting a web browser, with a terminal showing bug findings in the background" width="720"/>
@@ -47,6 +47,11 @@ your epic aren't just "this is broken, here's a screenshot" — they read
 like a starting point an engineer (or a coding agent) can act on
 without re-investigating from scratch.
 
+Pass `--codebase` multiple times if a UI symptom can trace back to more
+than one repo (frontend + backend, or a constellation of services). The
+bug-filer searches across all of them and references whichever repo's
+file is responsible.
+
 Everything talks back through the CLI, not just the TUI. `explorer
 status` summarizes a live or finished run. `explorer tail` streams the
 event feed. `--resume` continues a stopped session. `--pick-tab`
@@ -74,11 +79,20 @@ this way.
 ## Quickstart
 
 ```bash
+# single repo
 explorer \
   --jira-project AE \
   --epic AE-1546 \
   --codebase /home/me/r/your-product \
   --plan plans/your-plan.yaml -y --continuous
+
+# multi-repo (FE + BE + shared) — bug-filer searches across all of them
+explorer \
+  --jira-project AE --epic AE-1546 \
+  --codebase /home/me/r/flow-workbench \
+  --codebase /home/me/r/agents-service \
+  --codebase /home/me/r/uipath-python \
+  --plan plans/eval-flows.yaml -y --continuous
 ```
 
 If you skip `--tab-url`, a picker pops in the TUI listing every open
@@ -113,7 +127,7 @@ explorer --resume --pick-tab      # repick the tab before continuing
 |------|---------|
 | `--jira-project KEY` | Jira project key. Required on first run. |
 | `--epic KEY` | Jira epic key for bug filing. Required on first run. |
-| `--codebase PATH` | Path to the product source. Required on first run. |
+| `--codebase PATH` | Path to a product source tree. Required on first run; repeatable to feed the bug-filer multiple repos so it can find code that spans services. |
 | `--tab-url URL` | Browser tab to target. Omit to get a picker. |
 | `--bu-name NAME` | `browser-harness` daemon name. |
 | `--plan PATH` | YAML plan file. Skips the in-TUI interview. |
@@ -191,7 +205,7 @@ LLM is unreliable; this file is the truth.
 ```
 .explorer/
 ├── project.yaml          # CLI defaults: jira_project, epic_key,
-│                         # codebase_path, tab_url, bu_name,
+│                         # codebase_paths (list), tab_url, bu_name,
 │                         # confluence_space, confluence_page
 └── runs/<timestamp>/
     ├── plan.yaml         # the approved scenarios
@@ -229,9 +243,11 @@ anyone.
                                         ↓
                    Task(bug-filer, run_in_background=true)
                                         ↓
-                 [bug-filer claude sub-agent, cwd = codebase]
+                 [bug-filer claude sub-agent, cwd = primary codebase]
                    ├─ checks known-bug list (signature dedup)
-                   ├─ Read/Grep over product source for suspect code
+                   ├─ Read/Grep over the primary codebase + any
+                   │  additional --codebase paths (absolute) for
+                   │  suspect code
                    ├─ either mcp__atlassian__createJiraIssue
                    │       (Bug under the epic, body has Symptom +
                    │        Steps + Suspected code + Suggested fix)

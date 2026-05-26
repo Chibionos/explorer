@@ -162,7 +162,7 @@ async def amain() -> int:
                 answers=answers,
                 event_log=run_paths.event_log_for_subprocess,
                 bus=bus,
-                codebase_path=Path(cfg.codebase_path),
+                codebase_path=Path(cfg.primary_codebase),
             )
         planner_task = asyncio.create_task(run_planner_after_answers())
 
@@ -224,7 +224,8 @@ async def amain() -> int:
             scen_idx += 1
             async with lock.acquire():
                 rc = await run_explorer(
-                    scenario=scen, codebase_path=Path(cfg.codebase_path),
+                    scenario=scen,
+                    codebase_paths=[Path(p) for p in cfg.codebase_paths],
                     event_log=run_paths.event_log_for_subprocess,
                     screenshots_dir=run_paths.screenshots_dir,
                     jira_project=cfg.jira_project, epic_key=cfg.epic_key,
@@ -322,7 +323,7 @@ async def amain() -> int:
                 screenshot_paths=scenario_screenshots.get(sid, []),
                 run_dir=run_paths.root,
                 tab_url=app.current_tab_url() if 'app' in locals() else cfg.tab_url,
-                codebase_path=Path(cfg.codebase_path),
+                codebase_path=Path(cfg.primary_codebase),
                 event_log=run_paths.event_log_for_subprocess,
                 bus=bus,
             )
@@ -333,14 +334,14 @@ async def amain() -> int:
         asyncio.create_task(run_confluence_setup(
             mode="use", space=None, page_id=cfg.confluence_page,
             run_label=run_paths.root.name,
-            codebase_path=Path(cfg.codebase_path),
+            codebase_path=Path(cfg.primary_codebase),
             event_log=run_paths.event_log_for_subprocess, bus=bus,
         ))
     elif cfg.confluence_space:
         asyncio.create_task(run_confluence_setup(
             mode="create", space=cfg.confluence_space, page_id=None,
             run_label=run_paths.root.name,
-            codebase_path=Path(cfg.codebase_path),
+            codebase_path=Path(cfg.primary_codebase),
             event_log=run_paths.event_log_for_subprocess, bus=bus,
         ))
 

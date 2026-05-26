@@ -227,12 +227,17 @@ The full event stream is also persisted to `events.jsonl` for replay/audit.
 ```yaml
 jira_project: AE             # required first-run
 epic_key: AE-1546            # required first-run
-codebase_path: /path/to/src  # required first-run
+codebase_paths:              # required first-run; --codebase is repeatable
+  - /path/to/primary/repo    # first one is the explorer subprocess's cwd
+  - /path/to/backend/repo    # additional repos searched via absolute paths
 tab_url: https://app.tld/…   # optional; TUI picker fills it in
 bu_name: null                # optional browser-harness daemon name
 confluence_space: ENG        # optional, for per-run page creation
 confluence_page: "12345"     # optional, for persistent-page appending
 ```
+
+For back-compat, an older `project.yaml` with a single `codebase_path:`
+string is auto-migrated to a 1-element `codebase_paths:` list on load.
 
 **`events.jsonl` is replayable.** Resume reads it to determine which scenarios
 already emitted `scenario_done`.
@@ -291,17 +296,21 @@ counter-intuitive. NOT taste preferences or feature requests.
 
 ### 8.3 Bug Filer (Task sub-agent)
 
-**cwd:** the product codebase (inherited from explorer).
+**cwd:** the primary codebase (first `--codebase` passed to the orchestrator).
 **Inputs:** `{{BUG_UUID}}`, `{{BUG_TITLE}}`, `{{BUG_SYMPTOM}}`, `{{PAGE_URL}}`,
 `{{SCREENSHOT_PATH}}`, `{{JIRA_PROJECT}}`, `{{EPIC_KEY}}`,
-`{{KNOWN_BUG_TITLES}}`.
+`{{KNOWN_BUG_TITLES}}`. Also receives `$ADDITIONAL_CODEBASES` env var with
+newline-separated absolute paths to other repos (may be empty).
 
 **Behavior:**
 1. Check `{{KNOWN_BUG_TITLES}}` for a near-match (signature dedup). If found:
    `mcp__atlassian__addCommentToJiraIssue` with fresh repro + screenshot
    path. Emit `bug_dup_comment`. Stop.
-2. Otherwise: search the codebase with Grep/Read/Glob for the responsible
-   file(s). Identify file:line range, root cause hypothesis, suggested fix.
+2. Otherwise: search across the primary codebase (cwd) AND every path in
+   `$ADDITIONAL_CODEBASES` (use absolute paths with `Read`/`Grep`/`Glob`).
+   Identify file:line range, root cause hypothesis, suggested fix. When a
+   match is outside the primary cwd, quote the full absolute path so the
+   downstream coding agent knows which repo to land the fix in.
 3. `mcp__atlassian__createJiraIssue` with type=Bug, parent=epic, body
    containing: Symptom, Steps, Screenshot path, Suspected code (file:line +
    snippet), Suggested fix (3-6 sentences with exact identifiers), Labels.
@@ -626,6 +635,10 @@ tests of the state are sufficient.
 - Multi-tenant / multi-project parallel runs.
 - A scheduler. The runner is sequential; concurrency is at sub-agent level
   inside the explorer only.
+- A "which repos belong together" meta-doc layer. Explorer takes a list of
+  `--codebase` paths and searches across them, but it does not infer which
+  repos are needed for which scenario — that orchestration belongs one
+  layer up (a "harness of harnesses" that maps features → repo sets).
 
 ## 20. Suggested Build Order (for a fresh implementer)
 
