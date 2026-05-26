@@ -1,7 +1,8 @@
 from __future__ import annotations
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import Placeholder
+from .sessions_pane import SessionsPane
+from .bugs_pane import BugsPane
 
 from ..core.event_bus import EventBus
 from ..core.bug_store import BugStore
@@ -34,9 +35,13 @@ class ExplorerApp(App):
         self.header.epic_key = self._cfg.epic_key
         self.header.codebase_path = self._cfg.codebase_path
         yield self.header
+        self.sessions_pane = SessionsPane()
+        self.sessions_pane.id = "sessions"
+        self.bugs_pane = BugsPane(self._bugs)
+        self.bugs_pane.id = "bugs"
         with Horizontal():
-            yield Placeholder(name="SESSIONS", id="sessions")
-            yield Placeholder(name="BUGS", id="bugs")
+            yield self.sessions_pane
+            yield self.bugs_pane
         self.log_strip = LogStrip()
         self.log_strip.id = "log"
         yield self.log_strip
