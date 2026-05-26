@@ -47,4 +47,4 @@ async def run_interactive_claude(
         stdin_task.cancel()
         await bus.publish(Event(type="process_exit",
                                 data={"session_label": session_label,
-                                      "returncode": proc.returncode or -1}))
+                                      "returncode": proc.returncode if proc.returncode is not None else -1}))

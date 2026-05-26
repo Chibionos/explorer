@@ -36,9 +36,18 @@ Goal: `{{SCENARIO_GOAL}}`
      page_url, screenshot_path.
    - Use the `Task` tool to dispatch a `general-purpose` sub-agent with the
      bug-filer prompt at `$BUG_FILER_PROMPT_PATH`. Read that file and use its
-     contents as the sub-agent's prompt, substituting `{{BUG_UUID}}`,
-     `{{SCREENSHOT_PATH}}`, `{{BUG_TITLE}}`, `{{BUG_SYMPTOM}}`,
-     `{{PAGE_URL}}`. Run in background.
+     contents as the sub-agent's prompt. You must substitute ALL of these
+     placeholders before passing the prompt to Task:
+     - `{{BUG_UUID}}` → the uuid you just generated
+     - `{{BUG_TITLE}}` → a short headline for the bug
+     - `{{BUG_SYMPTOM}}` → one-paragraph description of the issue
+     - `{{PAGE_URL}}` → the current URL
+     - `{{SCREENSHOT_PATH}}` → absolute path to the screenshot you saved
+     - `{{JIRA_PROJECT}}` → `$JIRA_PROJECT` (read from your env)
+     - `{{EPIC_KEY}}` → `$EPIC_KEY` (read from your env)
+     - `{{KNOWN_BUG_TITLES}}` → the same dedup hint list you were given in
+       your own prompt (verbatim copy)
+     Run in background.
    - Continue exploring without waiting.
 5. If you discover a flow worth its own scenario, dispatch a `Task` sub-agent
    with the proposer prompt at `$PROPOSER_PROMPT_PATH`.
