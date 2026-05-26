@@ -17,6 +17,7 @@ from .runner.explorer import run_explorer
 from .runner.planner import run_planner_with_answers
 from .runner.tabs import list_chrome_tabs
 from .runner.confluence import run_confluence_setup, run_confluence_writer
+from .runner.claude_proc import ProcHolder
 from .tui.app import ExplorerApp
 from .tui.plan_screen import PlanScreen
 from .tui.tab_picker import TabPickerScreen
@@ -190,6 +191,13 @@ async def amain() -> int:
     # Snapshot of original plan, used by --continuous to requeue rounds.
     original_scenarios = list(queue.scenarios())
 
+    # Holder for the current explorer subprocess so the TUI's `r` keybinding
+    # can SIGTERM it. The runner's loop overwrites this each iteration.
+    current_explorer_proc = ProcHolder()
+
+    def _restart_current() -> None:
+        current_explorer_proc.terminate()
+
     async def runner():
         scen_idx = 0
         round_n = 1
@@ -223,6 +231,7 @@ async def amain() -> int:
                     dedup=dedup, bus=bus, session_label=f"explorer-{scen_idx}",
                     tab_url=app.current_tab_url(),
                     bu_name=cfg.bu_name,
+                    proc_holder=current_explorer_proc,
                 )
             # Give the tailer a tick to flush pending scenario_done events.
             await asyncio.sleep(0.2)
@@ -349,6 +358,7 @@ async def amain() -> int:
         plan_screen=plan_screen, scenario_runner=runner,
         force_tab_picker=args.pick_tab,
         on_tab_changed=_on_tab_changed,
+        restart_current=_restart_current,
     )
     await app.run_async()
 

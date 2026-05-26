@@ -3,7 +3,7 @@ from pathlib import Path
 from ..core.event_bus import EventBus
 from ..core.dedup import DedupIndex
 from ..core.scenario_queue import Scenario
-from .claude_proc import run_claude
+from .claude_proc import run_claude, ProcHolder
 
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -22,6 +22,7 @@ async def run_explorer(
     dedup: DedupIndex, bus: EventBus, session_label: str,
     tab_url: str | None = None,
     bu_name: str | None = None,
+    proc_holder: ProcHolder | None = None,
 ) -> int:
     template = (PROMPTS_DIR / "system_explorer.md").read_text()
     known = "; ".join(f"{k}: {t}" for k, t in dedup.titles_for_prompt()) or "(none yet)"
@@ -45,4 +46,5 @@ async def run_explorer(
     if bu_name:
         env["BU_NAME"] = bu_name
     return await run_claude(prompt=prompt, cwd=codebase_path,
-                            env_overrides=env, bus=bus, session_label=session_label)
+                            env_overrides=env, bus=bus, session_label=session_label,
+                            proc_holder=proc_holder)

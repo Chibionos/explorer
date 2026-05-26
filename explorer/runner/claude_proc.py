@@ -10,6 +10,27 @@ from ..core.event_bus import EventBus, Event
 _spawn = asyncio.create_subprocess_exec
 
 
+class ProcHolder:
+    """Mutable holder so the orchestrator can SIGTERM the active claude
+    subprocess (e.g. when the user presses 'r' to restart a stuck explorer).
+    Set by run_claude when a holder is passed in.
+    """
+    def __init__(self) -> None:
+        self.proc: asyncio.subprocess.Process | None = None
+
+    def set(self, proc: asyncio.subprocess.Process) -> None:
+        self.proc = proc
+
+    def terminate(self) -> bool:
+        if self.proc is None or self.proc.returncode is not None:
+            return False
+        try:
+            self.proc.terminate()
+            return True
+        except ProcessLookupError:
+            return False
+
+
 def _summarize_tool_use(name: str, inp: dict) -> str:
     """Format a tool_use block into a short human-readable line for the log strip."""
     if name == "Bash":
@@ -51,13 +72,20 @@ def parse_stream_line(line: str, *, session_label: str) -> list[Event]:
             if block.get("type") == "text" and block.get("text"):
                 text = block["text"].strip()
                 if text:
+                    # Note goes to both the log strip AND the sessions tree
+                    # as a 📝 narrative leaf (truncated).
                     events.append(Event(type="note", data={
+                        "session_label": session_label,
+                        "text": text[:400],
+                    }))
+                    events.append(Event(type="narrative", data={
                         "session_label": session_label,
                         "text": text[:200],
                     }))
             elif block.get("type") == "tool_use":
                 name = block.get("name", "")
                 inp = block.get("input", {}) or {}
+                summary = _summarize_tool_use(name, inp)
                 if name == "Task":
                     events.append(Event(type="subagent_start", data={
                         "session_label": session_label,
@@ -66,11 +94,17 @@ def parse_stream_line(line: str, *, session_label: str) -> list[Event]:
                         "subagent_type": inp.get("subagent_type", ""),
                     }))
                 else:
-                    # Surface every other tool call as a note so the log strip
-                    # shows what the agent is actually doing.
+                    # log strip line
                     events.append(Event(type="note", data={
                         "session_label": session_label,
-                        "text": _summarize_tool_use(name, inp),
+                        "text": summary,
+                    }))
+                    # sessions tree leaf
+                    events.append(Event(type="tool_action", data={
+                        "session_label": session_label,
+                        "tool_use_id": block.get("id", ""),
+                        "tool_name": name,
+                        "summary": summary,
                     }))
     elif rec.get("type") == "user":
         for block in rec.get("message", {}).get("content", []):
@@ -78,6 +112,7 @@ def parse_stream_line(line: str, *, session_label: str) -> list[Event]:
                 events.append(Event(type="subagent_end", data={
                     "session_label": session_label,
                     "tool_use_id": block.get("tool_use_id", ""),
+                    "is_error": bool(block.get("is_error", False)),
                 }))
     return events
 
@@ -85,6 +120,7 @@ def parse_stream_line(line: str, *, session_label: str) -> list[Event]:
 async def run_claude(
     *, prompt: str, cwd: Path, env_overrides: Mapping[str, str],
     bus: EventBus, session_label: str,
+    proc_holder: "ProcHolder | None" = None,
 ) -> int:
     env = os.environ.copy()
     env.update(env_overrides)
@@ -97,6 +133,8 @@ async def run_claude(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
+    if proc_holder is not None:
+        proc_holder.set(proc)
     await bus.publish(Event(type="process_start",
                             data={"session_label": session_label, "pid": proc.pid}))
     assert proc.stdout is not None

@@ -10,10 +10,12 @@ class Header(Widget):
     jira_project: reactive[str] = reactive("?")
     epic_key: reactive[str] = reactive("?")
     codebase_path: reactive[str] = reactive("?")
+    health: reactive[str] = reactive("idle")
 
     def render(self) -> str:
         return (
             f"explorer ─ Bugs: {self.bug_count} │ Pending: {self.pending} │ "
-            f"Discovered: {self.discovered} │ Jira: {self.jira_project} / "
-            f"Epic {self.epic_key} │ Code: {self.codebase_path}"
+            f"Discovered: {self.discovered} │ {self.health} │ "
+            f"Jira: {self.jira_project} / Epic {self.epic_key} │ "
+            f"Code: {self.codebase_path}"
         )

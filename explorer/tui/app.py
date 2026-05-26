@@ -25,6 +25,7 @@ class ExplorerApp(App):
         ("q", "quit", "quit"),
         ("e", "toggle_log", "expand log"),
         ("t", "pick_tab", "pick tab"),
+        ("r", "restart_current", "restart current explorer"),
     ]
 
     def __init__(
@@ -34,6 +35,7 @@ class ExplorerApp(App):
         scenario_runner: Callable[[], Awaitable[None]],
         force_tab_picker: bool = False,
         on_tab_changed: Callable[[str], None] | None = None,
+        restart_current: Callable[[], None] | None = None,
     ) -> None:
         super().__init__()
         self._cfg = cfg
@@ -46,6 +48,17 @@ class ExplorerApp(App):
         self._tab_url: str | None = cfg.tab_url
         self._force_tab_picker = force_tab_picker
         self._on_tab_changed = on_tab_changed
+        self._restart_current = restart_current
+        # session_label -> scenario_id (so scenario events route to the right tree node)
+        self._scenario_for_session: dict[str, str] = {}
+        self._session_for_scenario: dict[str, str] = {}
+        # Health tracking: seconds since last activity from a session.
+        # Updated every tool_action / narrative / note / sub-agent event.
+        import time
+        self._time = time
+        self._last_activity_at: dict[str, float] = {}
+        # Pending sub-agent labels (used to render sub-counts in header)
+        self._active_sessions: set[str] = set()
 
     def current_tab_url(self) -> str | None:
         """Read by the runner before each scenario; reflects latest user pick."""
@@ -102,7 +115,18 @@ class ExplorerApp(App):
         asyncio.create_task(self._consume_bug_events())
         asyncio.create_task(self._consume_queue_events())
         asyncio.create_task(self._consume_log())
+        asyncio.create_task(self._heartbeat_tick())
         asyncio.create_task(self._scenario_runner())
+
+    def action_restart_current(self) -> None:
+        """Kill the currently-running explorer subprocess. The runner loop
+        will catch the non-zero exit and either requeue (if scenario_done
+        wasn't emitted) or move on."""
+        if self._restart_current is None:
+            self.log_strip.append("(r) restart not wired")
+            return
+        self._restart_current()
+        self.log_strip.append("(r) sent SIGTERM to current explorer; runner will pick up next")
 
     @work
     async def action_pick_tab(self) -> None:
@@ -137,21 +161,50 @@ class ExplorerApp(App):
 
     async def _consume_session_events(self) -> None:
         async for ev in self._bus.subscribe("*"):
-            if ev.type == "process_start" and ev.data.get("session_label", "").startswith("explorer"):
-                label = ev.data["session_label"]
+            label = (ev.data or {}).get("session_label", "")
+            # Update last-activity timer for any event with a session_label.
+            if label:
+                self._last_activity_at[label] = self._time.time()
+
+            if ev.type == "process_start" and label.startswith("explorer"):
                 running = next((s for s in self._queue.scenarios()
                                 if self._queue.status(s.id).value == "running"), None)
                 title = running.title if running else label
                 self.sessions_pane.add_session(label, title)
+                if running:
+                    self._scenario_for_session[label] = running.id
+                    self._session_for_scenario[running.id] = label
+                self._active_sessions.add(label)
             elif ev.type == "subagent_start":
                 self.sessions_pane.add_subagent(
-                    ev.data["session_label"], ev.data["tool_use_id"], ev.data["description"])
+                    label, ev.data["tool_use_id"], ev.data.get("description", ""))
             elif ev.type == "subagent_end":
-                self.sessions_pane.end_subagent(ev.data["tool_use_id"])
+                self.sessions_pane.end_subagent(
+                    ev.data["tool_use_id"], error=ev.data.get("is_error", False))
+            elif ev.type == "tool_action":
+                self.sessions_pane.add_action(label, ev.data.get("summary", ""))
+            elif ev.type == "narrative":
+                self.sessions_pane.add_narrative(label, ev.data.get("text", ""))
             elif ev.type == "process_exit":
-                label = ev.data.get("session_label", "")
                 rc = ev.data.get("returncode", -1)
                 self.sessions_pane.mark_session(label, "done" if rc == 0 else "failed")
+                self._active_sessions.discard(label)
+            elif ev.type in ("scenario_start", "scenario_done", "bug_observed",
+                             "bug_filed", "bug_dup_comment", "scenario_proposed",
+                             "confluence_updated"):
+                # These events come from the JSONL tailer; route to the session
+                # whose scenario_id matches.
+                sid = ev.data.get("scenario_id") or ev.data.get("parent_scenario_id")
+                target_label = self._session_for_scenario.get(sid or "", "")
+                if not target_label:
+                    # Fall back to whichever session is currently active.
+                    target_label = next(iter(self._active_sessions), "")
+                if target_label:
+                    text = (ev.data.get("title") or ev.data.get("jira_key")
+                            or ev.data.get("id") or ev.data.get("text") or "")
+                    if ev.type == "bug_filed":
+                        text = f"{ev.data.get('jira_key','')} {ev.data.get('title','')}"
+                    self.sessions_pane.add_scenario_event(target_label, ev.type, text)
 
     async def _consume_bug_events(self) -> None:
         async for ev in self._bus.subscribe("bug_filed"):
@@ -168,3 +221,22 @@ class ExplorerApp(App):
         async for ev in self._bus.subscribe("note"):
             label = ev.data.get("session_label", "?")
             self.log_strip.append(f"{label}: {ev.data.get('text', '')[:120]}")
+
+    async def _heartbeat_tick(self) -> None:
+        """Once per second, update header health from last-activity timers."""
+        while True:
+            await asyncio.sleep(1.0)
+            now = self._time.time()
+            active = [(l, now - t) for l, t in self._last_activity_at.items()
+                      if l in self._active_sessions]
+            if not active:
+                self.header.health = "idle (no explorer)"
+                continue
+            # Pick the active session with the SHORTEST idle (most recently busy).
+            label, age = min(active, key=lambda lt: lt[1])
+            if age > 90:
+                self.header.health = f"⚠ STUCK {label} ({int(age)}s idle — press r to restart)"
+            elif age > 30:
+                self.header.health = f"⏳ slow {label} ({int(age)}s idle)"
+            else:
+                self.header.health = f"⏵ active {label} ({int(age)}s)"
