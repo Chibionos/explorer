@@ -1,0 +1,7 @@
+{"type": "system", "subtype": "init", "session_id": "s1", "tools": ["Task", "Bash"], "model": "claude-opus-4-7"}
+{"type": "stream_event", "event": {"type": "message_start", "message": {"type": "message", "role": "assistant", "content": [], "stop_reason": null}}, "session_id": "s1"}
+{"type": "assistant", "message": {"type": "message", "role": "assistant", "content": [{"type": "text", "text": "Looking at the page..."}], "stop_reason": "end_turn"}, "session_id": "s1"}
+{"type": "assistant", "message": {"type": "message", "role": "assistant", "content": [{"type": "tool_use", "id": "tu_1", "name": "Task", "input": {"description": "File bug", "subagent_type": "general-purpose", "prompt": "..."}}], "stop_reason": "tool_use"}, "session_id": "s1"}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": "Filed ABC-1051"}]}, "session_id": "s1"}
+{"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}, "session_id": "s1"}
+{"type": "result", "subtype": "success", "is_error": false, "session_id": "s1", "result": "Done", "stop_reason": "end_turn"}
