@@ -47,7 +47,8 @@ Goal: `{{SCENARIO_GOAL}}`
      - `{{EPIC_KEY}}` → `$EPIC_KEY` (read from your env)
      - `{{KNOWN_BUG_TITLES}}` → the same dedup hint list you were given in
        your own prompt (verbatim copy)
-     Run in background.
+     Pass `run_in_background=true` to the Task call so you can keep exploring
+     while the bug-filer runs.
    - Continue exploring without waiting.
 5. If you discover a flow worth its own scenario, dispatch a `Task` sub-agent
    with the proposer prompt at `$PROPOSER_PROMPT_PATH`.
