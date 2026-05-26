@@ -97,9 +97,39 @@ async def amain() -> int:
                 return scenarios
         plan_watcher = asyncio.create_task(watch_for_plan())
 
+    # Track which scenarios actually emitted scenario_done — a clean exit
+    # without scenario_done means the explorer bailed (e.g. wrong page),
+    # which should NOT count as "done".
+    completed_scenarios: set[str] = set()
+
+    async def watch_scenario_done():
+        async for ev in bus.subscribe("scenario_done"):
+            sid = ev.data.get("scenario_id")
+            if sid:
+                completed_scenarios.add(sid)
+    scenario_done_watcher = asyncio.create_task(watch_scenario_done())
+
+    # Snapshot of original plan, used by --continuous to requeue rounds.
+    original_scenarios = list(queue.scenarios())
+
     async def runner():
         scen_idx = 0
-        while not queue.all_done():
+        round_n = 1
+        while True:
+            if queue.all_done():
+                if not args.continuous:
+                    break
+                # --continuous: start a new round by requeuing the original plan
+                # with bumped ids (so dedup-by-id doesn't drop them).
+                round_n += 1
+                for s in original_scenarios:
+                    queue.propose(Scenario(
+                        id=f"{s.id}-r{round_n}",
+                        title=f"[round {round_n}] {s.title}",
+                        goal=s.goal,
+                    ))
+                await asyncio.sleep(0.1)
+                continue
             scen = queue.next_pending()
             if scen is None:
                 await asyncio.sleep(0.5)
@@ -115,10 +145,14 @@ async def amain() -> int:
                     dedup=dedup, bus=bus, session_label=f"explorer-{scen_idx}",
                     bu_name=cfg.bu_name,
                 )
-            if rc == 0:
+            # Give the tailer a tick to flush pending scenario_done events.
+            await asyncio.sleep(0.2)
+            if rc != 0:
+                queue.mark_failed(scen.id, f"exit {rc}")
+            elif scen.id in completed_scenarios:
                 queue.mark_done(scen.id)
             else:
-                queue.mark_failed(scen.id, f"exit {rc}")
+                queue.mark_failed(scen.id, "explorer exited without scenario_done (likely aborted)")
 
     async def handle_bug_filed():
         async for ev in bus.subscribe("bug_filed"):
@@ -145,7 +179,8 @@ async def amain() -> int:
     await app.run_async()
 
     # shutdown
-    tasks_to_cancel = [tailer, persist_task, bug_handler, proposed_handler]
+    tasks_to_cancel = [tailer, persist_task, bug_handler, proposed_handler,
+                       scenario_done_watcher]
     if planner_task is not None:
         tasks_to_cancel.append(planner_task)
     if 'plan_watcher' in locals():

@@ -9,7 +9,7 @@ class LogStrip(Widget):
 
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
-        self._lines: deque[str] = deque(maxlen=10)
+        self._lines: deque[str] = deque(maxlen=40)
 
     def append(self, line: str) -> None:
         self._lines.append(line)
@@ -25,6 +25,6 @@ class LogStrip(Widget):
     def render(self) -> str:
         if not self._lines:
             return "(idle)"
-        if not self.expanded:
-            return self._lines[-1]
-        return "\n".join(self._lines)
+        # By default show last 8 lines; e expands to all 40.
+        n = 20 if self.expanded else 8
+        return "\n".join(list(self._lines)[-n:])

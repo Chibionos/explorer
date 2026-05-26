@@ -2,5 +2,5 @@ Screen { background: $surface; }
 #header { height: 1; background: $primary; color: $text; padding: 0 1; }
 #sessions { width: 50%; border-right: solid $accent; }
 #bugs { width: 50%; }
-#log { dock: bottom; height: 1; background: $surface-darken-1; color: $text-muted; padding: 0 1; }
-#log.expanded { height: 10; }
+#log { dock: bottom; height: 8; background: $surface-darken-1; color: $text-muted; padding: 0 1; }
+#log.expanded { height: 20; }

@@ -15,6 +15,7 @@ class CliArgs:
     bu_name: str | None
     plan: str | None
     yes: bool
+    continuous: bool
 
 
 def parse_args(argv: list[str]) -> CliArgs:
@@ -29,10 +30,15 @@ def parse_args(argv: list[str]) -> CliArgs:
                         "(skips the in-TUI planner / interview).")
     p.add_argument("-y", "--yes", action="store_true",
                    help="When --plan is given, auto-approve and skip the approval screen.")
+    p.add_argument("--continuous", action="store_true",
+                   help="Keep exploring after the initial plan finishes: "
+                        "requeue every original scenario as a fresh round "
+                        "and let the explorer propose new scenarios. "
+                        "Press q to stop.")
     ns = p.parse_args(argv)
     return CliArgs(jira_project=ns.jira_project, epic=ns.epic,
                    codebase=ns.codebase, tab_url=ns.tab_url, bu_name=ns.bu_name,
-                   plan=ns.plan, yes=ns.yes)
+                   plan=ns.plan, yes=ns.yes, continuous=ns.continuous)
 
 
 def resolve_config(args: CliArgs, project_dir: Path) -> ProjectConfig:
