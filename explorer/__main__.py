@@ -16,9 +16,12 @@ from .runner.event_log_tailer import tail_event_log
 from .runner.explorer import run_explorer
 from .runner.planner import run_planner_with_answers
 from .runner.tabs import list_chrome_tabs
+from .runner.confluence import run_confluence_setup, run_confluence_writer
 from .tui.app import ExplorerApp
 from .tui.plan_screen import PlanScreen
 from .tui.tab_picker import TabPickerScreen
+from .cli.status import cmd_status
+from .cli.tail import cmd_tail
 from dataclasses import replace as _replace
 
 import yaml
@@ -248,6 +251,90 @@ async def amain() -> int:
     bug_handler = asyncio.create_task(handle_bug_filed())
     proposed_handler = asyncio.create_task(handle_proposed())
 
+    # ---- Confluence integration (optional) ----
+    # Track screenshots + bugs per scenario so we can hand them to the
+    # confluence-writer agent on scenario_done.
+    confluence_page_id: str | None = cfg.confluence_page
+    scenario_screenshots: dict[str, list[Path]] = {}
+    scenario_bugs: dict[str, list[tuple[str, str]]] = {}
+    current_scenario_id: str | None = None
+
+    async def watch_confluence_page_ready():
+        nonlocal confluence_page_id
+        async for ev in bus.subscribe("confluence_page_ready"):
+            new_id = ev.data.get("page_id")
+            if new_id:
+                confluence_page_id = new_id
+                # Persist so future runs from this cwd default to the same page.
+                nonlocal_cfg = _replace(cfg, confluence_page=new_id)
+                save_project_yaml(nonlocal_cfg, project_dir / ".explorer" / "project.yaml")
+            return
+    confluence_ready_watcher = asyncio.create_task(watch_confluence_page_ready())
+
+    async def watch_scenario_screenshots_and_bugs():
+        nonlocal current_scenario_id
+        async for ev in bus.subscribe("*"):
+            d = ev.data or {}
+            if ev.type == "scenario_start":
+                current_scenario_id = d.get("scenario_id")
+                if current_scenario_id:
+                    scenario_screenshots.setdefault(current_scenario_id, [])
+                    scenario_bugs.setdefault(current_scenario_id, [])
+            elif ev.type == "bug_observed":
+                sid = d.get("scenario_id") or current_scenario_id
+                shot = d.get("screenshot_path")
+                if sid and shot:
+                    scenario_screenshots.setdefault(sid, []).append(Path(shot))
+            elif ev.type == "bug_filed":
+                sid = d.get("scenario_id") or current_scenario_id
+                key, title = d.get("jira_key", ""), d.get("title", "")
+                if sid and key:
+                    scenario_bugs.setdefault(sid, []).append((key, title))
+    scen_evidence_watcher = asyncio.create_task(watch_scenario_screenshots_and_bugs())
+
+    async def watch_scenario_done_for_confluence():
+        async for ev in bus.subscribe("scenario_done"):
+            if not confluence_page_id:
+                continue
+            sid = ev.data.get("scenario_id")
+            if not sid:
+                continue
+            # Look up the scenario record for its title + goal.
+            scen = next((s for s in queue.scenarios() if s.id == sid), None)
+            title = scen.title if scen else sid
+            goal = scen.goal if scen else ""
+            await run_confluence_writer(
+                page_id=confluence_page_id,
+                scenario_id=sid,
+                scenario_title=title,
+                scenario_goal=goal,
+                scenario_status="done",
+                bugs_filed=scenario_bugs.get(sid, []),
+                screenshot_paths=scenario_screenshots.get(sid, []),
+                run_dir=run_paths.root,
+                tab_url=app.current_tab_url() if 'app' in locals() else cfg.tab_url,
+                codebase_path=Path(cfg.codebase_path),
+                event_log=run_paths.event_log_for_subprocess,
+                bus=bus,
+            )
+    confluence_writer_task = asyncio.create_task(watch_scenario_done_for_confluence())
+
+    # Kick off confluence setup if requested.
+    if cfg.confluence_page:
+        asyncio.create_task(run_confluence_setup(
+            mode="use", space=None, page_id=cfg.confluence_page,
+            run_label=run_paths.root.name,
+            codebase_path=Path(cfg.codebase_path),
+            event_log=run_paths.event_log_for_subprocess, bus=bus,
+        ))
+    elif cfg.confluence_space:
+        asyncio.create_task(run_confluence_setup(
+            mode="create", space=cfg.confluence_space, page_id=None,
+            run_label=run_paths.root.name,
+            codebase_path=Path(cfg.codebase_path),
+            event_log=run_paths.event_log_for_subprocess, bus=bus,
+        ))
+
     # When the user picks/changes the tab in the TUI, persist it so the next
     # run from this cwd picks the same tab by default.
     project_yaml_path = project_dir / ".explorer" / "project.yaml"
@@ -267,7 +354,8 @@ async def amain() -> int:
 
     # shutdown
     tasks_to_cancel = [tailer, persist_task, bug_handler, proposed_handler,
-                       scenario_done_watcher]
+                       scenario_done_watcher, confluence_ready_watcher,
+                       scen_evidence_watcher, confluence_writer_task]
     if planner_task is not None:
         tasks_to_cancel.append(planner_task)
     if 'plan_watcher' in locals():
@@ -278,6 +366,17 @@ async def amain() -> int:
 
 
 def main() -> None:
+    # Subcommand routing. `explorer status` and `explorer tail` are non-TUI
+    # helpers for coding agents to inspect a running session from outside.
+    # No subcommand (or `explorer run …`) → launch the TUI.
+    if len(sys.argv) >= 2 and sys.argv[1] in ("status", "tail"):
+        cmd = sys.argv.pop(1)
+        if cmd == "status":
+            sys.exit(cmd_status(sys.argv[1:]))
+        if cmd == "tail":
+            sys.exit(cmd_tail(sys.argv[1:]))
+    if len(sys.argv) >= 2 and sys.argv[1] == "run":
+        sys.argv.pop(1)
     sys.exit(asyncio.run(amain()))
 
 

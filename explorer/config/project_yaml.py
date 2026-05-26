@@ -11,6 +11,8 @@ class ProjectConfig:
     codebase_path: str
     tab_url: str | None
     bu_name: str | None
+    confluence_space: str | None = None
+    confluence_page: str | None = None
 
     def merge(self, **overrides) -> "ProjectConfig":
         clean = {k: v for k, v in overrides.items() if v is not None}
