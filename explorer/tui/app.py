@@ -56,12 +56,19 @@ class ExplorerApp(App):
         yield self.log_strip
 
     async def on_mount(self) -> None:
+        # Start the plan_ready subscriber before showing the screen,
+        # so we don't miss the event if the planner finishes quickly.
+        asyncio.create_task(self._consume_plan_ready())
+        # Also start the planner-text router before showing the screen,
+        # for the same reason.
+        asyncio.create_task(self._consume_planner_text())
+
         result = await self.push_screen_wait(self._plan_screen)
         if result is None or (isinstance(result, tuple) and result[0] != "approved"):
             self.exit()
             return
 
-        asyncio.create_task(self._consume_planner_text())
+        # Start the rest of the subscriptions and the scenario runner.
         asyncio.create_task(self._consume_session_events())
         asyncio.create_task(self._consume_bug_events())
         asyncio.create_task(self._consume_queue_events())
@@ -70,6 +77,13 @@ class ExplorerApp(App):
 
     def action_toggle_log(self) -> None:
         self.log_strip.toggle()
+
+    async def _consume_plan_ready(self) -> None:
+        import yaml
+        async for ev in self._bus.subscribe("plan_ready"):
+            scenarios = ev.data.get("scenarios", [])
+            text = yaml.safe_dump({"scenarios": scenarios}, sort_keys=False)
+            self._plan_screen.show_plan_for_approval(text)
 
     async def _consume_planner_text(self) -> None:
         async for ev in self._bus.subscribe("note"):
