@@ -7,8 +7,8 @@ from textual.widget import Widget
 class LogStrip(Widget):
     expanded: reactive[bool] = reactive(False)
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, *, id: str | None = None) -> None:
+        super().__init__(id=id)
         self._lines: deque[str] = deque(maxlen=10)
 
     def append(self, line: str) -> None:

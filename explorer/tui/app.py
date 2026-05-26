@@ -3,6 +3,7 @@ import asyncio
 from typing import Awaitable, Callable
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
+from textual import work
 
 from ..core.event_bus import EventBus
 from ..core.bug_store import BugStore
@@ -44,31 +45,29 @@ class ExplorerApp(App):
         self.header.epic_key = self._cfg.epic_key
         self.header.codebase_path = self._cfg.codebase_path
         yield self.header
-        self.sessions_pane = SessionsPane()
-        self.sessions_pane.id = "sessions"
-        self.bugs_pane = BugsPane(self._bugs)
-        self.bugs_pane.id = "bugs"
+        self.sessions_pane = SessionsPane(id="sessions")
+        self.bugs_pane = BugsPane(self._bugs, id="bugs")
         with Horizontal():
             yield self.sessions_pane
             yield self.bugs_pane
-        self.log_strip = LogStrip()
-        self.log_strip.id = "log"
+        self.log_strip = LogStrip(id="log")
         yield self.log_strip
 
-    async def on_mount(self) -> None:
-        # Start the plan_ready subscriber before showing the screen,
-        # so we don't miss the event if the planner finishes quickly.
+    def on_mount(self) -> None:
+        # Start the plan_ready subscriber and planner-text router BEFORE
+        # the plan screen is pushed, so neither misses an event if the
+        # planner finishes quickly.
         asyncio.create_task(self._consume_plan_ready())
-        # Also start the planner-text router before showing the screen,
-        # for the same reason.
         asyncio.create_task(self._consume_planner_text())
+        # Textual requires push_screen_wait to run inside a worker.
+        self._show_plan_screen_and_start()
 
+    @work
+    async def _show_plan_screen_and_start(self) -> None:
         result = await self.push_screen_wait(self._plan_screen)
         if result is None or (isinstance(result, tuple) and result[0] != "approved"):
             self.exit()
             return
-
-        # Start the rest of the subscriptions and the scenario runner.
         asyncio.create_task(self._consume_session_events())
         asyncio.create_task(self._consume_bug_events())
         asyncio.create_task(self._consume_queue_events())

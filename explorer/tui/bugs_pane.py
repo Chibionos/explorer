@@ -4,8 +4,8 @@ from ..core.bug_store import BugStore
 
 
 class BugsPane(ListView):
-    def __init__(self, store: BugStore) -> None:
-        super().__init__()
+    def __init__(self, store: BugStore, *, id: str | None = None) -> None:
+        super().__init__(id=id)
         self._store = store
 
     def refresh_from_store(self) -> None:
