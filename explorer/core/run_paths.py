@@ -16,6 +16,26 @@ class RunPaths:
         (root / "screenshots").mkdir(exist_ok=True)
         return cls(root=root)
 
+    @classmethod
+    def existing(cls, root: Path) -> "RunPaths":
+        """Reuse an existing run directory (for --resume)."""
+        if not root.exists():
+            raise FileNotFoundError(f"run dir not found: {root}")
+        (root / "screenshots").mkdir(exist_ok=True)
+        return cls(root=root)
+
+    @classmethod
+    def latest(cls, base: Path) -> "RunPaths | None":
+        """Find the most recent run dir under base/runs/, or None."""
+        runs_dir = base / "runs"
+        if not runs_dir.exists():
+            return None
+        candidates = sorted([p for p in runs_dir.iterdir() if p.is_dir()],
+                            reverse=True)
+        if not candidates:
+            return None
+        return cls.existing(candidates[0])
+
     @property
     def screenshots_dir(self) -> Path:
         return self.root / "screenshots"

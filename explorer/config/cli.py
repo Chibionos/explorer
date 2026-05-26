@@ -16,6 +16,7 @@ class CliArgs:
     plan: str | None
     yes: bool
     continuous: bool
+    resume: str | None
 
 
 def parse_args(argv: list[str]) -> CliArgs:
@@ -35,10 +36,17 @@ def parse_args(argv: list[str]) -> CliArgs:
                         "requeue every original scenario as a fresh round "
                         "and let the explorer propose new scenarios. "
                         "Press q to stop.")
+    p.add_argument("--resume", nargs="?", const="latest", default=None,
+                   help="Continue a previous run. Pass 'latest' or omit the "
+                        "value to pick the most recent run; or pass an explicit "
+                        ".explorer/runs/<timestamp> path. Reuses the run dir, "
+                        "replays events to skip already-completed scenarios, "
+                        "and seeds dedup from prior bugs.")
     ns = p.parse_args(argv)
     return CliArgs(jira_project=ns.jira_project, epic=ns.epic,
                    codebase=ns.codebase, tab_url=ns.tab_url, bu_name=ns.bu_name,
-                   plan=ns.plan, yes=ns.yes, continuous=ns.continuous)
+                   plan=ns.plan, yes=ns.yes, continuous=ns.continuous,
+                   resume=ns.resume)
 
 
 def resolve_config(args: CliArgs, project_dir: Path) -> ProjectConfig:

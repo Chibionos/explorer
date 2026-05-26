@@ -26,16 +26,80 @@ def _load_plan_file(path: Path) -> list[Scenario]:
             for s in data.get("scenarios", [])]
 
 
+def _scenarios_to_yaml(scenarios: list[Scenario]) -> str:
+    return yaml.safe_dump(
+        {"scenarios": [{"id": s.id, "title": s.title, "goal": s.goal}
+                       for s in scenarios]},
+        sort_keys=False,
+    )
+
+
+def _replay_completed_scenarios(events_log: Path) -> set[str]:
+    """Read events.jsonl and return ids of scenarios that emitted scenario_done."""
+    done: set[str] = set()
+    if not events_log.exists():
+        return done
+    for line in events_log.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if ev.get("type") == "scenario_done":
+            sid = (ev.get("data") or {}).get("scenario_id")
+            if sid:
+                done.add(sid)
+    return done
+
+
+def _resolve_resume_path(resume_arg: str, base: Path) -> Path:
+    """Turn --resume's argument into an absolute run dir."""
+    if resume_arg == "latest":
+        rp = RunPaths.latest(base)
+        if rp is None:
+            raise FileNotFoundError(
+                f"--resume latest: no prior runs under {base / 'runs'}")
+        return rp.root
+    p = Path(resume_arg)
+    if not p.is_absolute():
+        # Allow relative paths like ".explorer/runs/<ts>" or "<ts>"
+        if (base / "runs" / resume_arg).exists():
+            p = base / "runs" / resume_arg
+        else:
+            p = Path.cwd() / resume_arg
+    if not p.exists():
+        raise FileNotFoundError(f"--resume: run dir not found: {p}")
+    return p
+
+
 async def amain() -> int:
     args = parse_args(sys.argv[1:])
     project_dir = Path.cwd()
     cfg = resolve_config(args, project_dir=project_dir)
 
-    run_paths = RunPaths.new(base=project_dir / ".explorer")
+    # --resume + --plan conflict; prefer explicit error over silent priority.
+    if args.resume and args.plan:
+        print("--resume and --plan can't be used together: resume reuses the "
+              "plan from the prior run dir.", file=sys.stderr)
+        return 2
+
+    if args.resume:
+        try:
+            resume_root = _resolve_resume_path(args.resume, project_dir / ".explorer")
+        except FileNotFoundError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        run_paths = RunPaths.existing(resume_root)
+    else:
+        run_paths = RunPaths.new(base=project_dir / ".explorer")
+
     bus = EventBus()
     queue = ScenarioQueue.from_scenarios([])
+    # BugStore auto-loads existing bugs.json if the file exists.
     bugs = BugStore(mirror_path=run_paths.bugs_json)
-    dedup = DedupIndex.from_pairs([])
+    dedup = DedupIndex.from_pairs([(b.title, b.jira_key) for b in bugs.all()])
     lock = BrowserLock()
 
     tailer = asyncio.create_task(tail_event_log(run_paths.event_log_for_subprocess, bus))
@@ -51,7 +115,22 @@ async def amain() -> int:
     plan_screen = PlanScreen(answers_out=answers_out)
     planner_task: asyncio.Task | None = None
 
-    if args.plan:
+    if args.resume:
+        # Reuse the prior run's plan.yaml. Mark already-completed scenarios DONE.
+        if not run_paths.plan_yaml.exists():
+            print(f"--resume: prior run has no plan.yaml at {run_paths.plan_yaml}",
+                  file=sys.stderr)
+            return 2
+        scenarios = _load_plan_file(run_paths.plan_yaml)
+        for s in scenarios:
+            queue.propose(s)
+        completed_already = _replay_completed_scenarios(run_paths.events_log)
+        for sid in completed_already:
+            if sid in {s.id for s in queue.scenarios()}:
+                queue.mark_done(sid)
+        # Auto-approve: nothing to review, we're picking up where we stopped.
+        plan_screen.set_auto_approve(_scenarios_to_yaml(scenarios))
+    elif args.plan:
         # Pre-made plan from a YAML file. Skip planner + interview entirely.
         plan_path = Path(args.plan)
         if not plan_path.exists():
@@ -63,17 +142,9 @@ async def amain() -> int:
         run_paths.plan_yaml.write_text(plan_path.read_text())
 
         if args.yes:
-            # Auto-approve: emit a fake "approved" dismiss on first paint by
-            # having the screen put a plan_ready into the bus and skipping
-            # right past approval.
-            plan_screen.set_auto_approve(yaml.safe_dump(
-                {"scenarios": [{"id": s.id, "title": s.title, "goal": s.goal}
-                               for s in scenarios]}, sort_keys=False))
+            plan_screen.set_auto_approve(_scenarios_to_yaml(scenarios))
         else:
-            # Show the plan in the approval screen so user can sanity-check.
-            plan_screen.set_preloaded_plan(yaml.safe_dump(
-                {"scenarios": [{"id": s.id, "title": s.title, "goal": s.goal}
-                               for s in scenarios]}, sort_keys=False))
+            plan_screen.set_preloaded_plan(_scenarios_to_yaml(scenarios))
     else:
         # Interactive: TUI walks through questions, then planner subprocess
         # converts answers into a plan_ready event.
