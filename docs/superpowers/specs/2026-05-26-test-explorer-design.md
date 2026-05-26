@@ -55,7 +55,10 @@ explorer (Python+Textual orchestrator)
     └─ Task scenario-proposer
 ```
 
-- One explorer at a time (browser lock is implicit).
+- One explorer at a time. The lock is enforced by an explicit
+  `asyncio.Lock` in `core/browser_lock.py` so that a future scenario cannot
+  start until the previous explorer's Task sub-agents (including parallel
+  bug-filers) have finished and the process has exited.
 - Sub-agents inherit `cwd = codebase` so they can `Read`/`Grep` product code.
 - Sub-agents inherit `mcp__atlassian__*` from the user's MCP config.
 - Bug-filers can run in parallel via `Task(... run_in_background=true)`; the
@@ -87,6 +90,11 @@ explorer (Python+Textual orchestrator)
 - **Keys**: `q` quit, `p` pause queue, `r` resume / requeue selected, `e`
   expand log, `↑↓ enter` inspect, `o` open codebase file in `$EDITOR`, `j` open
   Jira URL.
+- **Planner interview screen**: before the plan-approval overlay, a
+  full-screen scrollable transcript view shows the planner subprocess's
+  questions one at a time; the user types answers into a single-line input at
+  the bottom (Enter submits). When the planner emits its final `plan.yaml`,
+  the screen transitions to the plan-approval overlay.
 - **Pre-run plan-approval overlay**: full-screen list of proposed scenarios
   with goals; `y` approve / `e` edit in `$EDITOR` / `q` quit.
 
@@ -134,6 +142,13 @@ In-memory dict `{title_signature: jira_key}` populated at startup from one
 MCP search of the epic's existing issues, updated on every `bug_filed`. The
 list is passed into every bug-filer Task prompt so the sub-agent can decide:
 file new, or comment on existing.
+
+`title_signature` is computed in `core/dedup.py` as the normalized title:
+lowercase, strip punctuation, collapse whitespace, drop stopwords (`the`,
+`a`, `an`, `on`, `in`, `to`, `for`, `with`, `is`, `are`). Two titles with
+the same normalized form are treated as the same bug. This is intentionally
+lossy and biases toward dedup; the bug-filer makes the final judgment using
+the title list it's given (it can override and file new if symptoms differ).
 
 ## Component boundaries (Section 4)
 
@@ -195,7 +210,7 @@ that's all in markdown prompts.
 | Failure | Detection | Response |
 |---|---|---|
 | Claude subprocess crashes mid-scenario | `Popen.wait()` non-zero before `scenario_done` | Mark scenario `failed`; TUI shows ✗; user can `r` to requeue. |
-| browser-harness daemon hangs | Explorer Bash timeout | Explorer bails after 3 consecutive harness failures, emits `note`; orchestrator banners. |
+| browser-harness daemon hangs | Explorer Bash timeout | Counter is per-scenario (reset on `scenario_start`). Explorer bails after 3 consecutive harness failures in the same scenario, emits `note`; orchestrator banners. |
 | Jira/MCP unavailable | bug-filer tool call fails | bug-filer writes `bug_filed_failed` with prepared body; orchestrator caches in `pending_bugs.jsonl`, retries every 60s. |
 | Tab navigated away by user | Explorer screenshot URL mismatch | Explorer verifies URL at scenario start; if mismatch, emit `note` and skip. |
 | Two bugs are the same | Dedup index hit | bug-filer adds a comment on existing issue, emits `bug_dup_comment`. |
