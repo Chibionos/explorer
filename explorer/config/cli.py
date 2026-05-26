@@ -17,6 +17,7 @@ class CliArgs:
     yes: bool
     continuous: bool
     resume: str | None
+    pick_tab: bool
 
 
 def parse_args(argv: list[str]) -> CliArgs:
@@ -42,11 +43,14 @@ def parse_args(argv: list[str]) -> CliArgs:
                         ".explorer/runs/<timestamp> path. Reuses the run dir, "
                         "replays events to skip already-completed scenarios, "
                         "and seeds dedup from prior bugs.")
+    p.add_argument("--pick-tab", action="store_true",
+                   help="Force the tab picker even when --tab-url is set or "
+                        "saved in project.yaml.")
     ns = p.parse_args(argv)
     return CliArgs(jira_project=ns.jira_project, epic=ns.epic,
                    codebase=ns.codebase, tab_url=ns.tab_url, bu_name=ns.bu_name,
                    plan=ns.plan, yes=ns.yes, continuous=ns.continuous,
-                   resume=ns.resume)
+                   resume=ns.resume, pick_tab=ns.pick_tab)
 
 
 def resolve_config(args: CliArgs, project_dir: Path) -> ProjectConfig:
@@ -58,11 +62,11 @@ def resolve_config(args: CliArgs, project_dir: Path) -> ProjectConfig:
         save(merged, project_dir / ".explorer" / "project.yaml")
         return merged
 
+    # --tab-url is optional: when missing, the TUI shows a tab picker.
     missing = [name for name, v in (
         ("--jira-project", args.jira_project),
         ("--epic", args.epic),
         ("--codebase", args.codebase),
-        ("--tab-url", args.tab_url),
     ) if v is None]
     if missing:
         print(f"first run requires: {', '.join(missing)}", file=sys.stderr)

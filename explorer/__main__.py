@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .config.cli import parse_args, resolve_config
+from .config.project_yaml import save as save_project_yaml
 from .core.event_bus import EventBus, Event
 from .core.scenario_queue import ScenarioQueue, Scenario
 from .core.bug_store import BugStore, Bug
@@ -14,8 +15,11 @@ from .core.run_paths import RunPaths
 from .runner.event_log_tailer import tail_event_log
 from .runner.explorer import run_explorer
 from .runner.planner import run_planner_with_answers
+from .runner.tabs import list_chrome_tabs
 from .tui.app import ExplorerApp
 from .tui.plan_screen import PlanScreen
+from .tui.tab_picker import TabPickerScreen
+from dataclasses import replace as _replace
 
 import yaml
 
@@ -214,6 +218,7 @@ async def amain() -> int:
                     screenshots_dir=run_paths.screenshots_dir,
                     jira_project=cfg.jira_project, epic_key=cfg.epic_key,
                     dedup=dedup, bus=bus, session_label=f"explorer-{scen_idx}",
+                    tab_url=app.current_tab_url(),
                     bu_name=cfg.bu_name,
                 )
             # Give the tailer a tick to flush pending scenario_done events.
@@ -243,9 +248,20 @@ async def amain() -> int:
     bug_handler = asyncio.create_task(handle_bug_filed())
     proposed_handler = asyncio.create_task(handle_proposed())
 
+    # When the user picks/changes the tab in the TUI, persist it so the next
+    # run from this cwd picks the same tab by default.
+    project_yaml_path = project_dir / ".explorer" / "project.yaml"
+
+    def _on_tab_changed(new_url: str) -> None:
+        nonlocal cfg
+        cfg = _replace(cfg, tab_url=new_url)
+        save_project_yaml(cfg, project_yaml_path)
+
     app = ExplorerApp(
         cfg=cfg, bus=bus, queue=queue, bugs=bugs, run_paths=run_paths,
         plan_screen=plan_screen, scenario_runner=runner,
+        force_tab_picker=args.pick_tab,
+        on_tab_changed=_on_tab_changed,
     )
     await app.run_async()
 

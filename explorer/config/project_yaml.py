@@ -9,7 +9,7 @@ class ProjectConfig:
     jira_project: str
     epic_key: str
     codebase_path: str
-    tab_url: str
+    tab_url: str | None
     bu_name: str | None
 
     def merge(self, **overrides) -> "ProjectConfig":

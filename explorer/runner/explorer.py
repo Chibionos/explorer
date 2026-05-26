@@ -20,6 +20,7 @@ async def run_explorer(
     *, scenario: Scenario, codebase_path: Path, event_log: Path,
     screenshots_dir: Path, jira_project: str, epic_key: str,
     dedup: DedupIndex, bus: EventBus, session_label: str,
+    tab_url: str | None = None,
     bu_name: str | None = None,
 ) -> int:
     template = (PROMPTS_DIR / "system_explorer.md").read_text()
@@ -31,6 +32,7 @@ async def run_explorer(
         "JIRA_PROJECT": jira_project,
         "EPIC_KEY": epic_key,
         "KNOWN_BUG_TITLES": known,
+        "TAB_URL": tab_url or "(none — verify the current tab looks like an app under test)",
     })
     env = {
         "EXPLORER_EVENT_LOG": str(event_log),

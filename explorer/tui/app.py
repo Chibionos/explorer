@@ -15,6 +15,8 @@ from .log_strip import LogStrip
 from .sessions_pane import SessionsPane
 from .bugs_pane import BugsPane
 from .plan_screen import PlanScreen
+from .tab_picker import TabPickerScreen
+from ..runner.tabs import list_chrome_tabs
 
 
 class ExplorerApp(App):
@@ -22,6 +24,7 @@ class ExplorerApp(App):
     BINDINGS = [
         ("q", "quit", "quit"),
         ("e", "toggle_log", "expand log"),
+        ("t", "pick_tab", "pick tab"),
     ]
 
     def __init__(
@@ -29,6 +32,8 @@ class ExplorerApp(App):
         bugs: BugStore, run_paths: RunPaths,
         plan_screen: PlanScreen,
         scenario_runner: Callable[[], Awaitable[None]],
+        force_tab_picker: bool = False,
+        on_tab_changed: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__()
         self._cfg = cfg
@@ -38,6 +43,13 @@ class ExplorerApp(App):
         self._run_paths = run_paths
         self._plan_screen = plan_screen
         self._scenario_runner = scenario_runner
+        self._tab_url: str | None = cfg.tab_url
+        self._force_tab_picker = force_tab_picker
+        self._on_tab_changed = on_tab_changed
+
+    def current_tab_url(self) -> str | None:
+        """Read by the runner before each scenario; reflects latest user pick."""
+        return self._tab_url
 
     def compose(self) -> ComposeResult:
         self.header = Header(id="header")
@@ -60,10 +72,28 @@ class ExplorerApp(App):
         asyncio.create_task(self._consume_plan_ready())
         asyncio.create_task(self._consume_planner_text())
         # Textual requires push_screen_wait to run inside a worker.
-        self._show_plan_screen_and_start()
+        self._show_pickers_and_start()
 
     @work
-    async def _show_plan_screen_and_start(self) -> None:
+    async def _show_pickers_and_start(self) -> None:
+        # If we don't have a tab URL yet, or the user forced --pick-tab,
+        # show the tab picker first.
+        if self._tab_url is None or self._force_tab_picker:
+            tabs = await list_chrome_tabs()
+            if tabs:
+                picked = await self.push_screen_wait(
+                    TabPickerScreen(tabs=tabs, current_url=self._tab_url))
+                if picked is None:
+                    self.exit()
+                    return
+                self._tab_url = picked.url
+                if self._on_tab_changed:
+                    self._on_tab_changed(picked.url)
+            # If browser-harness returns nothing, fall through with whatever
+            # tab_url we already had (may be None); the explorer's first step
+            # will then bail and surface a useful note.
+
+        # Plan approval / interview.
         result = await self.push_screen_wait(self._plan_screen)
         if result is None or (isinstance(result, tuple) and result[0] != "approved"):
             self.exit()
@@ -73,6 +103,22 @@ class ExplorerApp(App):
         asyncio.create_task(self._consume_queue_events())
         asyncio.create_task(self._consume_log())
         asyncio.create_task(self._scenario_runner())
+
+    @work
+    async def action_pick_tab(self) -> None:
+        """Mid-run repick. Takes effect on the NEXT scenario the runner starts."""
+        tabs = await list_chrome_tabs()
+        if not tabs:
+            self.log_strip.append("(t) browser-harness returned no tabs")
+            return
+        picked = await self.push_screen_wait(
+            TabPickerScreen(tabs=tabs, current_url=self._tab_url))
+        if picked is None:
+            return
+        self._tab_url = picked.url
+        if self._on_tab_changed:
+            self._on_tab_changed(picked.url)
+        self.log_strip.append(f"(t) tab → {picked.title[:80]}")
 
     def action_toggle_log(self) -> None:
         self.log_strip.toggle()

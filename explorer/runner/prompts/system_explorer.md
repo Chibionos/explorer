@@ -19,12 +19,21 @@ Goal: `{{SCENARIO_GOAL}}`
   it, but only AFTER you've observed a bug — exploration comes first.
 - Jira project: `{{JIRA_PROJECT}}`. Bug epic: `{{EPIC_KEY}}`.
 - Already-filed bug titles (for dedup hints): `{{KNOWN_BUG_TITLES}}`
+- Target tab URL: `{{TAB_URL}}`
 
 ## What to do
 
 1. Verify the tab is on the right page:
-   `browser-harness -c 'print(page_info())'`. If wrong, append a `note` event
-   to `$EXPLORER_EVENT_LOG` and exit.
+   `browser-harness -c 'print(page_info())'`. The URL should be the target
+   tab URL above (an exact match or a same-origin / same-path navigation
+   inside that app is fine). If the current tab is something completely
+   unrelated (different domain or a totally different app), look at the
+   other open tabs with
+   `browser-harness -c 'import json; print(json.dumps([t for t in cdp("Target.getTargets")["targetInfos"] if t.get("type")=="page"]))'`
+   and if you can find a tab matching the target URL, switch to it with
+   `browser-harness -c 'cdp("Target.activateTarget", {"targetId": "<id>"})'`.
+   Only if NO suitable tab exists, append a `note` event to
+   `$EXPLORER_EVENT_LOG` and exit.
 2. Start the scenario by appending to `$EXPLORER_EVENT_LOG`:
    `{"type": "scenario_start", "data": {"scenario_id": "{{SCENARIO_ID}}", "title": "{{SCENARIO_TITLE}}"}}`
 3. Explore. Take screenshots. Click around. Try edge cases relevant to the

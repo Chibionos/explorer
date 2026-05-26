@@ -1,0 +1,138 @@
+# Maestro Studio — evaluations-focused exploratory plan
+# Target codebase: /home/chibionos/r/flow-workbench (packages/evals)
+# Approved: do not delete other users' evaluators/sets, no Run/Debug on
+# expensive LLM-judge evaluators, no editing production schemas.
+#
+# Background (from packages/workbench/.claude/docs/evals/):
+# Evaluations have two top-level objects:
+#   - Evaluators: standalone rules (equals, json-similarity, llm-judge,
+#     trajectory, plus the 11 schema-driven "coded" evaluator types).
+#   - Evaluation Sets: test suites containing EvaluationItems (inputs,
+#     expectedOutput, expectedAgentBehavior, mockingStrategy) that reference
+#     evaluators via evaluatorRefs.
+#
+# Each scenario tells the explorer roughly where to look and what kinds
+# of bugs to be alert for. If the explorer can't find the evaluations
+# area in the current tab, it should look at neighbouring Chrome tabs
+# (e.g. an evals admin/landing page) before bailing.
+
+scenarios:
+  - id: evals-entry-and-navigation
+    title: Find and navigate to the evaluations area
+    goal: |
+      Locate the evaluations entry point from the current Maestro Studio
+      designer view (likely a sidebar/tab/breadcrumb labelled "Evals" or
+      "Evaluations"). Click into it. Walk the top-level navigation:
+      list of evaluation sets, list of evaluators, anything that looks
+      like history or runs.
+      Look for: dead links, broken breadcrumbs, missing empty states,
+      counts that don't match the visible list, slow loading without a
+      spinner.
+
+  - id: create-evaluator-each-type
+    title: Create one evaluator of every visible type
+    goal: |
+      In the evaluators list, try to create a new evaluator for each
+      type you find (equals, json-similarity, llm-as-judge, trajectory,
+      and any of the 11 coded types — uipath-contains, uipath-equals,
+      uipath-regex, uipath-numeric, uipath-trajectory-tool-call-*, etc).
+      Open the form for each type, fill the required fields, save.
+      Look for: required fields without asterisks, validation that
+      lies, type-specific config fields that don't render or render the
+      wrong widget, save buttons that stay disabled forever, type names
+      that are different in the dropdown vs the saved record.
+
+  - id: evaluator-llm-judge-config
+    title: LLM-as-judge evaluator config UX
+    goal: |
+      Create an evaluator of type llm-as-judge. Explore: prompt template
+      input (long/multiline/with-variables like {{output}}), model
+      picker (if any), criteria text, scoring scale config, threshold,
+      rubric text.
+      Look for: variable references that don't autocomplete, missing
+      "preview prompt" affordance, criteria input that swallows
+      newlines/tabs, scoring scale that allows nonsensical values,
+      threshold input that accepts strings or out-of-range numbers
+      without validation feedback.
+
+  - id: evaluator-trajectory-tool-call
+    title: Trajectory / tool-call evaluator config UX
+    goal: |
+      Create a trajectory-evaluator (or any uipath-trajectory-tool-call-*
+      coded evaluator). Configure: expected tools used, their order,
+      argument constraints. Add multiple expected tool calls, reorder
+      them via drag-or-arrows if available.
+      Look for: drag-and-drop that loses order, reorder controls that
+      jump items by 2 instead of 1, JSON argument fields that allow
+      invalid JSON, tool-name suggestions that don't match real tools,
+      remove-button that's misaligned or removes the wrong row.
+
+  - id: evaluation-set-create-and-add-items
+    title: Create an evaluation set and add test items
+    goal: |
+      Create a new evaluation set. Reference an existing evaluator.
+      Add 2-3 EvaluationItem rows: inputs JSON, expectedOutput JSON,
+      expectedAgentBehavior text, mockingStrategy config.
+      Look for: JSON editors that say valid but the saved record is
+      malformed, copy/paste from another field corrupting the data,
+      add-row buttons that duplicate the previous row's values
+      unexpectedly, save behaviour when the set has 0 items.
+
+  - id: evaluator-ref-management
+    title: Adding and removing evaluator references on a set
+    goal: |
+      Open an existing evaluation set. Add an evaluator to its
+      evaluatorRefs. Remove one. Add the same evaluator twice. Add
+      an evaluator that doesn't exist (if a free-text input is shown).
+      Look for: ref pickers that allow duplicates silently, removing a
+      ref also removing its evaluator (cascade bug), refs that survive
+      after the underlying evaluator is deleted, list ordering that
+      shifts on every save.
+
+  - id: mocking-strategy-config
+    title: Mocking strategy / tool simulation config
+    goal: |
+      On an EvaluationItem, configure mockingStrategy. Try the
+      different mock modes (record/playback/explicit). Enter mock
+      responses for a tool. Provide both valid and obviously-broken
+      JSON in mock responses.
+      Look for: mock-mode switch that doesn't reset stale data from
+      the previous mode, JSON validators that accept invalid JSON,
+      missing "this is a mock" indicator at run time, tooltips that
+      describe a different mode than the one selected.
+
+  - id: run-an-evaluation-cheaply
+    title: Run a single cheap evaluation end-to-end
+    goal: |
+      Pick the cheapest evaluator type (equals or json-similarity),
+      set up a tiny evaluation with 1 item, run it. Watch the run
+      progress, watch the result land. ONLY use deterministic/cheap
+      evaluator types — do NOT trigger an LLM-judge run for this.
+      Look for: progress indicator that lies (says done when it isn't),
+      failed runs that surface as success, the result panel staying
+      empty after completion, the "run" button enabling before all
+      required config is set, runs that need a manual page refresh to
+      see results.
+
+  - id: evaluation-results-panel
+    title: Reading evaluation results
+    goal: |
+      Open the results of any past evaluation run. Inspect the
+      per-item breakdown (pass/fail, score, expected vs actual,
+      diff view if any).
+      Look for: diff views that don't actually diff (just show two
+      blobs side-by-side), pass/fail badges that disagree with the
+      score, copy-to-clipboard buttons that copy the wrong value,
+      expand/collapse state lost on scroll, truncation without a
+      "show all" affordance, timestamps in the wrong timezone.
+
+  - id: evaluation-keyboard-and-modals
+    title: Modals + keyboard behaviour in the evaluations area
+    goal: |
+      In the evaluations area, try keyboard shortcuts: Tab through any
+      evaluator form, Escape to close any modal that opens, Ctrl-Z in
+      JSON editors, Enter inside a textarea (should not submit).
+      Look for: Escape that doesn't close the modal, Tab order that
+      jumps wildly, Enter that submits a form when the user just
+      meant a newline, focus rings that are invisible, shortcuts that
+      fire from inside the prompt textarea.
