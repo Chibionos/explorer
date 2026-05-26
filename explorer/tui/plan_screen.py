@@ -48,10 +48,12 @@ class PlanScreen(Screen):
 
     def on_mount(self) -> None:
         if self._auto_approve_plan is not None:
-            # Pre-made plan + --yes: dismiss immediately as approved.
-            self.call_after_refresh(
-                self.dismiss, ("approved", self._auto_approve_plan)
-            )
+            # Pre-made plan + --yes / --resume: dismiss as approved AFTER the
+            # screen is fully mounted (Textual prohibits dismiss() inside a
+            # message handler). A short timer defers it to the next tick.
+            self.input.disabled = True
+            self.transcript.write_line("Auto-approved — starting exploration…")
+            self.set_timer(0.05, self._do_auto_approve)
             return
         if self._preloaded_plan is not None:
             # Pre-made plan, manual approval: jump straight to approval mode.
@@ -59,6 +61,9 @@ class PlanScreen(Screen):
             self.show_plan_for_approval(self._preloaded_plan)
             return
         self._ask_next()
+
+    def _do_auto_approve(self) -> None:
+        self.dismiss(("approved", self._auto_approve_plan))
 
     def _ask_next(self) -> None:
         if self._q_idx < len(INTERVIEW_QUESTIONS):
