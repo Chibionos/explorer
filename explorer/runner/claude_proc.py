@@ -117,11 +117,27 @@ def parse_stream_line(line: str, *, session_label: str) -> list[Event]:
     return events
 
 
+async def _drain_stream(stream: asyncio.StreamReader, sink) -> None:
+    """Read lines from stream and pass each raw line to sink(line)."""
+    async for raw in stream:
+        await sink(raw)
+
+
 async def run_claude(
     *, prompt: str, cwd: Path, env_overrides: Mapping[str, str],
     bus: EventBus, session_label: str,
     proc_holder: "ProcHolder | None" = None,
+    exit_grace_seconds: float = 5.0,
 ) -> int:
+    """Spawn the claude CLI and forward its stream-json events to the bus.
+
+    Watchdog: claude's Task tool can spawn grandchildren that inherit stdout.
+    When claude itself exits but a grandchild keeps the pipe alive, the
+    naive `async for raw in proc.stdout` reader would wait forever for EOF.
+    Here we race the stream reader against `proc.wait()`. Once the process
+    is gone, we give the reader a short grace period to drain any remaining
+    buffered output, then close the streams and move on.
+    """
     env = os.environ.copy()
     env.update(env_overrides)
     proc = await _spawn(
@@ -137,12 +153,56 @@ async def run_claude(
         proc_holder.set(proc)
     await bus.publish(Event(type="process_start",
                             data={"session_label": session_label, "pid": proc.pid}))
-    assert proc.stdout is not None
-    async for raw in proc.stdout:
+
+    assert proc.stdout is not None and proc.stderr is not None
+
+    async def handle_stdout(raw: bytes) -> None:
         for ev in parse_stream_line(raw.decode("utf-8", errors="replace"),
                                     session_label=session_label):
             await bus.publish(ev)
-    rc = await proc.wait()
+
+    async def handle_stderr(raw: bytes) -> None:
+        # Forward non-empty stderr as note events so anything claude
+        # complains about shows up in the log strip. Also prevents the
+        # stderr pipe from filling and blocking the child.
+        text = raw.decode("utf-8", errors="replace").strip()
+        if text:
+            await bus.publish(Event(type="note", data={
+                "session_label": session_label,
+                "text": f"stderr: {text[:300]}",
+            }))
+
+    stdout_task = asyncio.create_task(_drain_stream(proc.stdout, handle_stdout))
+    stderr_task = asyncio.create_task(_drain_stream(proc.stderr, handle_stderr))
+    wait_task = asyncio.create_task(proc.wait())
+
+    # Wait for the process to exit. Stream drains may continue past that
+    # if grandchildren are still holding fds open, so we give them a
+    # bounded grace period and then close the streams ourselves.
+    await wait_task
+    rc = proc.returncode if proc.returncode is not None else -1
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(stdout_task, stderr_task, return_exceptions=True),
+            timeout=exit_grace_seconds,
+        )
+    except asyncio.TimeoutError:
+        # A grandchild is still holding the pipe open. Force-close.
+        for s in (proc.stdout, proc.stderr):
+            try:
+                s._transport.close()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        for t in (stdout_task, stderr_task):
+            t.cancel()
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+        await bus.publish(Event(type="note", data={
+            "session_label": session_label,
+            "text": f"watchdog: subprocess exited but pipe held open by "
+                    f"grandchild; forced close after {exit_grace_seconds}s",
+        }))
+
     await bus.publish(Event(type="process_exit",
                             data={"session_label": session_label, "returncode": rc}))
     return rc
